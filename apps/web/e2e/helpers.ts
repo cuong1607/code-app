@@ -35,6 +35,15 @@ export async function api(): Promise<APIRequestContext> {
 export async function cleanup(prefix: string) {
   const ctx = await api();
   try {
+    const scripts = (await (await ctx.get('/scripts', { params: { limit: 200 } })).json()) as {
+      id: string;
+      title: string;
+      productSku: string | null;
+    }[];
+    for (const s of scripts.filter(
+      (x) => x.title.includes(prefix) || x.productSku?.startsWith(prefix),
+    ))
+      await ctx.delete(`/scripts/${s.id}`);
     const products = await (
       await ctx.get('/products', { params: { search: prefix, pageSize: 100 } })
     ).json();

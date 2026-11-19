@@ -1,8 +1,9 @@
 'use client';
 
-import { Clapperboard } from 'lucide-react';
+import { Clapperboard, FileText, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { DemoNotice } from '@/components/common';
+import { Button } from '@/components/ui/button';
 import { BatchSection } from './batch-section';
 import { ConfigSection } from './config-section';
 import { FactoryTable } from './factory-table';
@@ -18,7 +19,7 @@ import { useVideoFactory } from './use-video-factory';
 export function VideoFactoryView() {
   const params = useSearchParams();
   const initial = (params.get('products') ?? '').split(',').filter(Boolean);
-  const state = useVideoFactory(initial);
+  const state = useVideoFactory(initial, params.get('script'));
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:h-[calc(100dvh-var(--topbar-height))] lg:overflow-hidden">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -39,6 +40,27 @@ export function VideoFactoryView() {
           Chờ xử lý). Chưa có worker render: chạy/tạm dừng/dừng sẽ hoạt động ở Phase 07.
         </DemoNotice>
       </div>
+      {state.script || state.scriptError ? (
+        <div
+          role="status"
+          className="bg-card flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+        >
+          <FileText className="text-primary size-4" aria-hidden />
+          {state.script ? (
+            <span className="min-w-0">
+              Kịch bản đầu vào: <strong>{state.script.title}</strong> (phiên bản{' '}
+              {state.script.versionNumber}
+              {state.script.productName ? ` · ${state.script.productName}` : ''}) – được gắn vào
+              luồng của đúng sản phẩm này.
+            </span>
+          ) : (
+            <span className="text-danger">Không tải được kịch bản: {state.scriptError}</span>
+          )}
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={state.clearScript}>
+            <X /> Bỏ kịch bản
+          </Button>
+        </div>
+      ) : null}
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(300px,25%)_minmax(0,1fr)]">
         <aside

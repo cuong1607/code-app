@@ -1,4 +1,4 @@
-# Tài liệu API – AI CONTENT STUDIO (Phase 02)
+# Tài liệu API – AI CONTENT STUDIO (Phase 03)
 
 - Base URL nội bộ: `http://127.0.0.1:4000` (API **chỉ nghe loopback**).
 - Trình duyệt gọi qua proxy cùng origin của web: `http://127.0.0.1:3000/api/backend/<đường dẫn>`.
@@ -28,15 +28,19 @@
 }
 ```
 
-| HTTP | code                | Khi nào                                                                                 |
-| ---- | ------------------- | --------------------------------------------------------------------------------------- |
-| 400  | BAD_REQUEST         | Request sai cấu trúc                                                                    |
-| 403  | FORBIDDEN           | Truy cập không từ máy cục bộ; tải ảnh từ URL bị chặn (nguồn chưa được phép, IP nội bộ…) |
-| 404  | NOT_FOUND           | Không tồn tại / không thuộc workspace                                                   |
-| 409  | CONFLICT            | SKU trùng, ảnh đang được dùng, prompt trùng tên, phiên upload hết hạn                   |
-| 413  | PAYLOAD_TOO_LARGE   | File/JSON vượt giới hạn                                                                 |
-| 422  | VALIDATION_ERROR    | Dữ liệu không hợp lệ – `details` là mảng `{ path, message }` tiếng Việt                 |
-| 503  | SERVICE_UNAVAILABLE | DB / Redis / MinIO không sẵn sàng                                                       |
+| HTTP | code                    | Khi nào                                                                                      |
+| ---- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| 400  | BAD_REQUEST             | Request sai cấu trúc                                                                         |
+| 403  | FORBIDDEN               | Truy cập không từ máy cục bộ; tải ảnh từ URL bị chặn (nguồn chưa được phép, IP nội bộ…)      |
+| 404  | NOT_FOUND               | Không tồn tại / không thuộc workspace                                                        |
+| 409  | CONFLICT                | SKU trùng, ảnh đang được dùng, prompt trùng tên, phiên upload hết hạn                        |
+| 413  | PAYLOAD_TOO_LARGE       | File/JSON vượt giới hạn                                                                      |
+| 402  | BUDGET_EXCEEDED         | Lệnh AI vượt ngân sách (mỗi lần/ngày/tháng) hoặc không có đơn giá để dự tính chi phí         |
+| 422  | VALIDATION_ERROR        | Dữ liệu không hợp lệ – `details` là mảng `{ path, message }` tiếng Việt                      |
+| 429  | RATE_LIMITED            | Vượt số lượt gọi AI/phút (`AI_RATE_LIMIT_PER_MINUTE`) hoặc provider giới hạn tốc độ          |
+| 502  | PROVIDER_ERROR          | Provider AI lỗi/quá tải/từ chối/trả JSON sai sau số lần sửa cho phép (không lộ chi tiết thô) |
+| 503  | SERVICE_UNAVAILABLE     | DB / Redis / MinIO không sẵn sàng                                                            |
+| 503  | PROVIDER_NOT_CONFIGURED | Provider AI chưa có API key/model, hoặc key không hợp lệ                                     |
 
 ## Danh sách có phân trang
 
@@ -87,16 +91,47 @@ Chế độ `mode`: `skip_duplicates` (bỏ qua SKU đã có), `update_duplicate
 
 ## Bản nháp & cài đặt
 
-| Method       | Đường dẫn                                                    | Mô tả                                                                                                    |
-| ------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| GET/POST     | `/drafts/video`                                              | Luồng Video Factory. POST `{ drafts: VideoDraftInput[] }` (≤ 200)                                        |
-| PATCH/DELETE | `/drafts/video/:id`                                          | Sửa tên/prompt/cấu hình · xoá                                                                            |
-| POST         | `/drafts/video/delete`                                       | Xoá nhiều `{ ids }`                                                                                      |
-| GET/POST     | `/drafts/publishing`                                         | Bài đăng nháp (trạng thái `pending_review`). `attachCart=true` → 422 (chưa hỗ trợ)                       |
-| PATCH/DELETE | `/drafts/publishing/:id` · POST `/drafts/publishing/delete`  | Sửa caption/hashtag/giờ · xoá                                                                            |
-| GET/POST     | `/drafts/scripts` · PATCH/DELETE `/drafts/scripts/:id`       | Kịch bản nháp                                                                                            |
-| GET/POST     | `/prompt-presets?scope=video` · DELETE `/prompt-presets/:id` | Prompt đã lưu (trùng tên → 409)                                                                          |
-| GET/PUT      | `/settings`                                                  | Cài đặt không nhạy cảm. PUT nhận bản vá, deep-merge rồi validate **strict** (khoá lạ như `apiKey` → 422) |
-| GET          | `/workspace`                                                 | Workspace hiện tại + `authMode`                                                                          |
-| GET          | `/dashboard/summary`                                         | Số liệu tổng quan thật                                                                                   |
-| GET          | `/health`, `/health/live`                                    | Công khai                                                                                                |
+| Method       | Đường dẫn                                                            | Mô tả                                                                                                    |
+| ------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| GET/POST     | `/drafts/video`                                                      | Luồng Video Factory. POST `{ drafts: VideoDraftInput[] }` (≤ 200)                                        |
+| PATCH/DELETE | `/drafts/video/:id`                                                  | Sửa tên/prompt/cấu hình · xoá                                                                            |
+| POST         | `/drafts/video/delete`                                               | Xoá nhiều `{ ids }`                                                                                      |
+| GET/POST     | `/drafts/publishing`                                                 | Bài đăng nháp (trạng thái `pending_review`). `attachCart=true` → 422 (chưa hỗ trợ)                       |
+| PATCH/DELETE | `/drafts/publishing/:id` · POST `/drafts/publishing/delete`          | Sửa caption/hashtag/giờ · xoá                                                                            |
+| GET/POST     | `/prompt-presets?scope=video\|script` · DELETE `/prompt-presets/:id` | Prompt đã lưu (trùng tên → 409)                                                                          |
+| GET/PUT      | `/settings`                                                          | Cài đặt không nhạy cảm. PUT nhận bản vá, deep-merge rồi validate **strict** (khoá lạ như `apiKey` → 422) |
+| GET          | `/workspace`                                                         | Workspace hiện tại + `authMode`                                                                          |
+| GET          | `/dashboard/summary`                                                 | Số liệu tổng quan thật                                                                                   |
+| GET          | `/health`, `/health/live`                                            | Công khai                                                                                                |
+
+## AI Script Engine (Phase 03) – `/scripts`
+
+API key **chỉ** đọc từ biến môi trường server; không endpoint nào nhận hay trả API key.
+Mọi lệnh gọi AI: validate (schema strict, từ chối trường lạ như `workspaceId`) → kiểm tra sản phẩm thuộc workspace →
+provider sẵn sàng + model trong danh sách cho phép → ước tính & giữ chỗ ngân sách → rate limit → timeout + retry có giới hạn
+→ kiểm tra JSON (sửa tối đa `AI_MAX_REPAIR_ATTEMPTS` lần) → lưu → ghi `ai_usage`.
+
+| Method | Đường dẫn                                            | Mô tả                                                                                                                                                                   |
+| ------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/scripts/templates`                                 | 8 template (id, tên, mô tả, phiên bản, cấu trúc, quy tắc, mẫu prompt, điều kiện bắt buộc)                                                                               |
+| GET    | `/scripts/providers`                                 | Trạng thái provider (`ready`/`not_configured`/`disabled`), model cho phép, có đơn giá hay không, provider mặc định                                                      |
+| POST   | `/scripts/providers/:id/check`                       | Kiểm tra key + model qua Models API (không tốn token). Body `{ model? }`                                                                                                |
+| POST   | `/scripts/estimate`                                  | Body như `generate` → số lời gọi, token & chi phí **ước tính**, trần chi phí, còn lại hôm nay/tháng, `allowed`. Không gọi AI                                            |
+| POST   | `/scripts/generate`                                  | `scriptGenerateRequestSchema` → `{ generationId, items[{ status, script \| error }], usage }`. Biến thể lỗi không làm mất bản thành công; tất cả lỗi → mã lỗi tương ứng |
+| GET    | `/scripts?productId=&variantGroupId=&search=&limit=` | Danh sách (mỗi kịch bản = phiên bản mới nhất; lọc `variantGroupId` → mọi biến thể)                                                                                      |
+| POST   | `/scripts`                                           | Lưu kịch bản soạn tay / từ khuôn mẫu `{ productId, document, origin: manual\|sample }` (không AI)                                                                       |
+| GET    | `/scripts/:id`                                       | Chi tiết phiên bản + danh sách phiên bản + usage của phiên bản                                                                                                          |
+| PATCH  | `/scripts/:id`                                       | Sửa tay phiên bản đang mở `{ document }` (không AI)                                                                                                                     |
+| POST   | `/scripts/:id/versions`                              | Lưu thành phiên bản mới `{ document, changeNote? }` – phiên bản cũ giữ nguyên                                                                                           |
+| POST   | `/scripts/:id/scenes/:index/regenerate`              | AI viết lại 1 cảnh `{ instructions?, provider?, model? }` → **phiên bản mới**                                                                                           |
+| POST   | `/scripts/:id/caption/regenerate`                    | AI viết lại caption + hashtag + CTA → **phiên bản mới**                                                                                                                 |
+| PUT    | `/scripts/:id/preferred`                             | Chọn phiên bản tốt nhất trong nhóm biến thể                                                                                                                             |
+| DELETE | `/scripts/:id`                                       | Xoá kịch bản cùng **toàn bộ** phiên bản                                                                                                                                 |
+| GET    | `/scripts/usage/summary`                             | Chi phí ước tính hôm nay (giờ VN)/tháng, ngân sách, 20 lời gọi gần nhất                                                                                                 |
+
+`ScriptDocument` (v2, `scriptDocumentSchema`): `language` = `vi-VN`, `title`, `style`, `targetDurationSeconds`, `hook`,
+`narration` (**server tự ghép** từ `spokenText` các cảnh – nguồn cho TTS), `scenes[]` (`index`, `sceneType`,
+`durationHintSeconds`, `description`, `visualPrompt`, `spokenText`, `overlayText`, `visualSource`), `caption`, `hashtags`,
+`cta`, `complianceFlags`. `estimatedSpeechSeconds` trong phản hồi là **ước tính** (≈ 3,2 âm tiết/giây), không phải thời lượng audio.
+
+Video Factory: `POST /drafts/video` nhận thêm `scriptId` (phiên bản kịch bản dùng làm đầu vào, phải thuộc workspace).

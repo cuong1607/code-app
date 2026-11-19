@@ -40,16 +40,18 @@ Thứ tự build: `packages/shared` → `apps/*`. Các script gốc `dev/lint/ty
 
 ## 3. Quyết định kỹ thuật & phiên bản
 
-| Hạng mục      | Chọn                                                                    | Lý do                                                                                                                                                                                                                    |
-| ------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| TypeScript    | 5.9                                                                     | TS 7 (native) đã ra nhưng `typescript-eslint` mới hỗ trợ `<6.1`.                                                                                                                                                         |
-| Prisma        | 6.19                                                                    | Tag `latest` trên npm đang là 8.0 **RC**; 6.x ổn định, không bắt buộc driver adapter.                                                                                                                                    |
-| NestJS        | 11                                                                      | Major ổn định, hệ sinh thái (testing, cli) tương thích đầy đủ.                                                                                                                                                           |
-| ESLint        | 9 (flat config)                                                         | Tương thích ổn định với `eslint-config-next` 16 & `typescript-eslint` 8.                                                                                                                                                 |
-| BullMQ        | 5                                                                       | Major ổn định lâu dài.                                                                                                                                                                                                   |
-| Test          | Vitest (+SWC cho Nest)                                                  | Một công cụ test cho cả monorepo; SWC để emit decorator metadata.                                                                                                                                                        |
-| Module format | CommonJS cho api/worker/shared                                          | Tương thích tối đa với NestJS/BullMQ; Next.js import CJS bình thường.                                                                                                                                                    |
-| MinIO image   | `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (bản build cộng đồng Pigsty) | MinIO ngừng phát hành image chính thức (Docker Hub `minio/minio` bị gỡ, `quay.io` 401). Vẫn là MinIO nên giữ nguyên env & code. Vì dùng chuẩn S3 nên có thể thay bằng S3/R2/RustFS/SeaweedFS mà không đổi code ứng dụng. |
+| Hạng mục       | Chọn                                                                           | Lý do                                                                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TypeScript     | 5.9                                                                            | TS 7 (native) đã ra nhưng `typescript-eslint` mới hỗ trợ `<6.1`.                                                                                                                                                         |
+| Prisma         | 6.19                                                                           | Tag `latest` trên npm đang là 8.0 **RC**; 6.x ổn định, không bắt buộc driver adapter.                                                                                                                                    |
+| NestJS         | 11                                                                             | Major ổn định, hệ sinh thái (testing, cli) tương thích đầy đủ.                                                                                                                                                           |
+| ESLint         | 9 (flat config)                                                                | Tương thích ổn định với `eslint-config-next` 16 & `typescript-eslint` 8.                                                                                                                                                 |
+| BullMQ         | 5                                                                              | Major ổn định lâu dài.                                                                                                                                                                                                   |
+| Test           | Vitest (+SWC cho Nest)                                                         | Một công cụ test cho cả monorepo; SWC để emit decorator metadata.                                                                                                                                                        |
+| Module format  | CommonJS cho api/worker/shared                                                 | Tương thích tối đa với NestJS/BullMQ; Next.js import CJS bình thường.                                                                                                                                                    |
+| MinIO image    | `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (bản build cộng đồng Pigsty)        | MinIO ngừng phát hành image chính thức (Docker Hub `minio/minio` bị gỡ, `quay.io` 401). Vẫn là MinIO nên giữ nguyên env & code. Vì dùng chuẩn S3 nên có thể thay bằng S3/R2/RustFS/SeaweedFS mà không đổi code ứng dụng. |
+| AI SDK         | `@anthropic-ai/sdk` 1.10 · `openai` 7.60                                       | SDK chính thức của từng nhà cung cấp (Phase 03). Gọi qua adapter server-side; SDK `maxRetries = 0` để retry do app kiểm soát và ghi usage từng lần gọi.                                                                  |
+| Model mặc định | `claude-opus-5-5` (đổi qua `ANTHROPIC_SCRIPT_MODEL`); OpenAI không có mặc định | Không hardcode model ID OpenAI để tránh lỗi thời – bắt buộc cấu hình `OPENAI_SCRIPT_MODEL`.                                                                                                                              |
 
 Thay đổi công nghệ chỉ khi có lý do kỹ thuật rõ ràng và phải ghi lại tại bảng này.
 
@@ -85,7 +87,8 @@ Thay đổi công nghệ chỉ khi có lý do kỹ thuật rõ ràng và phải 
 
 ## 8. Provider interfaces (AI)
 
-Định nghĩa tại `packages/shared/src/providers/` – **chưa có triển khai**:
+Định nghĩa tại `packages/shared/src/providers/`. Phase 03 đã triển khai `ScriptProvider` (xem §11); các interface còn lại
+chưa có triển khai:
 
 | Interface              | Nhiệm vụ                                        |
 | ---------------------- | ----------------------------------------------- |
@@ -164,7 +167,35 @@ chữ thường) ghi ở tầng ứng dụng; truy vấn `LIKE '%…%'` dùng in
 Thư viện thêm ở Phase 02 (lý do): `exceljs` (đọc/ghi .xlsx, MIT, không phụ thuộc native), `csv-parse`/`csv-stringify`
 (CSV chuẩn RFC 4180), `image-size` (đọc kích thước ảnh từ buffer, thuần JS), `@aws-sdk/s3-request-presigner` (ký URL S3).
 
-## 11. Định hướng (chưa triển khai)
+## 11. AI Script Engine (Phase 03)
+
+```
+/studio/scripts ──► /api/backend proxy (280s cho route AI) ──► ScriptsController (/scripts)
+                                                                │
+              ScriptGenerationService ── validate ─ workspace ─ provider/model ─ estimate ─ reserve budget ─ rate limit
+                                                                │
+              ScriptProviderRegistry (env) ─► Claude | OpenAI | Mock  (BaseScriptProvider: prompt → complete() → JSON → validate → repair/retry)
+                                                                │
+              ScriptsService (script_drafts: phiên bản)   AiUsageService (ai_usage: token, chi phí ước tính, ngân sách)
+```
+
+- **Code**: `apps/api/src/ai/` (provider, prompt, template, kiểm tra output, đơn giá, usage, giới hạn) và
+  `apps/api/src/scripts/` (API, phiên bản, điều phối). Schema dùng chung: `packages/shared/src/domain/script-engine.ts`,
+  luật kiểm tra & ước tính đọc: `script-quality.ts` (dùng cả ở web để hiển thị trực tiếp khi sửa).
+- **Prompt 4 tầng**: `SYSTEM_RULES` cố định (không chứa dữ liệu) → `<product_data>` JSON đã escape `< > &` (dữ liệu
+  không tin cậy, whitelist trường, không giá vốn/URL đầy đủ, giá bán chỉ khi cho phép) → `<creative_brief>` (template,
+  hướng triển khai, cấu hình) + `<user_creative_request>` → output contract qua structured outputs.
+- **Kiểm tra output** không tin structured outputs tuyệt đối: Zod strict → dựng `ScriptDocument` (narration do server ghép
+  từ `spokenText`) → lint (lỗi = yêu cầu AI sửa, có giới hạn; cảnh báo = gắn vào `complianceFlags`/`issues`).
+- **Phiên bản**: mỗi dòng `script_drafts` là 1 phiên bản (`root_id`, `parent_id`, `version_number`). Sửa tay cập nhật
+  phiên bản đang mở; "lưu phiên bản mới" và mọi thao tác AI tạo lại luôn tạo dòng mới.
+- **Chi phí**: token từ phản hồi provider × đơn giá tham khảo (`pricing.ts`) = **ước tính**. Ngân sách mỗi lần / ngày (giờ VN) /
+  tháng (khi `hardStop`); giữ chỗ cho lệnh đang chạy; không có đơn giá → từ chối. Rate limit theo phút + semaphore toàn API
+  (trong bộ nhớ – đủ cho dev-local; cần Redis khi chạy nhiều instance).
+- **Chuẩn bị cho TTS (Phase 05)**: `document.narration` + `scenes[].spokenText` (+ `durationHintSeconds`) là đầu vào trực tiếp;
+  lời thoại đã được kiểm tra không hashtag/emoji/URL, có dấu; `estimateSpeechSeconds()` chỉ là dự kiến.
+
+## 12. Định hướng (chưa triển khai)
 
 - Module nghiệp vụ trong api: `products`, `scripts`, `assets`, `voices`, `videos`, `schedules`, `integrations/tiktok`.
 - Queue riêng cho từng loại tác vụ: `ingest`, `script`, `image`, `tts`, `render`, `publish` để giới hạn concurrency/rate-limit độc lập.

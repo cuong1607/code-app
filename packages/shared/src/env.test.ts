@@ -42,6 +42,21 @@ describe('env', () => {
     );
   });
 
+  it('cấu hình AI Script: mặc định an toàn, cấm Mock provider ở production', () => {
+    const env = parseEnv(apiEnvSchema, validApiEnv, 'api');
+    expect(env.ANTHROPIC_SCRIPT_MODEL).toBe('claude-opus-5-5');
+    expect(env.OPENAI_SCRIPT_MODEL).toBeUndefined();
+    expect(env.AI_MOCK_PROVIDER_ENABLED).toBe(false);
+    expect(env.AI_MAX_RETRIES).toBe(2);
+    expect(() =>
+      parseEnv(
+        apiEnvSchema,
+        { ...validApiEnv, NODE_ENV: 'production', AI_MOCK_PROVIDER_ENABLED: 'true' },
+        'api',
+      ),
+    ).toThrow(/MockScriptProvider/);
+  });
+
   it('mặc định chỉ nghe loopback, dev workspace cố định, tắt tải ảnh từ URL', () => {
     const env = parseEnv(apiEnvSchema, validApiEnv, 'api');
     expect(env.API_HOST).toBe('127.0.0.1');

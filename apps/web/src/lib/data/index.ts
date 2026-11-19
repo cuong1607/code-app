@@ -26,8 +26,17 @@ import {
   type PromptPresetInput,
   type PublishingDraft,
   type PublishingDraftInput,
-  type ScriptDraft,
-  type ScriptDraftInput,
+  type AiUsageSummary,
+  type ProviderCheckResult,
+  type Script,
+  type ScriptDetail,
+  type ScriptDocument,
+  type ScriptEstimate,
+  type ScriptGenerateRequest,
+  type ScriptGenerationResult,
+  type ScriptProviderId,
+  type ScriptProvidersResponse,
+  type ScriptTemplate,
   type VideoDraft,
   type VideoDraftInput,
   type WorkspaceContext,
@@ -44,7 +53,14 @@ import {
   productSchema,
   promptPresetSchema,
   publishingDraftSchema,
-  scriptDraftSchema,
+  aiUsageSummarySchema,
+  providerCheckResultSchema,
+  scriptDetailSchema,
+  scriptEstimateSchema,
+  scriptGenerationResultSchema,
+  scriptProvidersResponseSchema,
+  scriptSchema,
+  scriptTemplateSchema,
   uploadTicketSchema,
   videoDraftSchema,
   workspaceContextSchema,
@@ -254,20 +270,83 @@ export const publishingDraftRepository = {
     apiRequest('/drafts/publishing/delete', { method: 'POST', body: { ids }, schema: deleted }),
 };
 
-export const scriptDraftRepository = {
-  list: (): Promise<ScriptDraft[]> =>
-    apiRequest('/drafts/scripts', { schema: z.array(scriptDraftSchema) }),
-  create: (input: ScriptDraftInput): Promise<ScriptDraft> =>
-    apiRequest('/drafts/scripts', { method: 'POST', body: input, schema: scriptDraftSchema }),
-  update: (id: string, input: Partial<ScriptDraftInput>): Promise<ScriptDraft> =>
-    apiRequest(`/drafts/scripts/${id}`, {
-      method: 'PATCH',
-      body: input,
-      schema: scriptDraftSchema,
-    }),
-  remove: (id: string) => apiRequest(`/drafts/scripts/${id}`, { method: 'DELETE' }),
+// ---------------------------------------------------------------- AI Script Engine (Phase 03)
+export type ScriptListQuery = {
+  productId?: string;
+  variantGroupId?: string;
+  search?: string;
+  limit?: number;
 };
+const AI_TIMEOUT_MS = 285_000;
 
+export const scriptRepository = {
+  templates: (): Promise<ScriptTemplate[]> =>
+    apiRequest('/scripts/templates', { schema: z.array(scriptTemplateSchema) }),
+  providers: (): Promise<ScriptProvidersResponse> =>
+    apiRequest('/scripts/providers', { schema: scriptProvidersResponseSchema }),
+  checkProvider: (id: ScriptProviderId, model?: string): Promise<ProviderCheckResult> =>
+    apiRequest(`/scripts/providers/${id}/check`, {
+      method: 'POST',
+      body: model ? { model } : {},
+      schema: providerCheckResultSchema,
+      timeoutMs: 30_000,
+    }),
+  usageSummary: (): Promise<AiUsageSummary> =>
+    apiRequest('/scripts/usage/summary', { schema: aiUsageSummarySchema }),
+  /** Dự tính chi phí – KHÔNG gọi AI */
+  estimate: (req: ScriptGenerateRequest): Promise<ScriptEstimate> =>
+    apiRequest('/scripts/estimate', { method: 'POST', body: req, schema: scriptEstimateSchema }),
+  generate: (req: ScriptGenerateRequest, signal?: AbortSignal): Promise<ScriptGenerationResult> =>
+    apiRequest('/scripts/generate', {
+      method: 'POST',
+      body: req,
+      schema: scriptGenerationResultSchema,
+      timeoutMs: AI_TIMEOUT_MS,
+      signal,
+    }),
+  list: (q: ScriptListQuery = {}): Promise<Script[]> =>
+    apiRequest('/scripts', { query: toQuery(q), schema: z.array(scriptSchema) }),
+  get: (id: string): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}`, { schema: scriptDetailSchema }),
+  createManual: (input: {
+    productId: string | null;
+    document: ScriptDocument;
+    origin: 'manual' | 'sample';
+    templateId?: string | null;
+  }): Promise<ScriptDetail> =>
+    apiRequest('/scripts', { method: 'POST', body: input, schema: scriptDetailSchema }),
+  /** Sửa tay phiên bản đang mở */
+  update: (id: string, document: ScriptDocument): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}`, {
+      method: 'PATCH',
+      body: { document },
+      schema: scriptDetailSchema,
+    }),
+  /** Lưu thành phiên bản mới (phiên bản cũ giữ nguyên) */
+  saveVersion: (id: string, document: ScriptDocument, changeNote?: string): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}/versions`, {
+      method: 'POST',
+      body: { document, ...(changeNote ? { changeNote } : {}) },
+      schema: scriptDetailSchema,
+    }),
+  regenerateScene: (id: string, index: number, instructions = ''): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}/scenes/${index}/regenerate`, {
+      method: 'POST',
+      body: { instructions },
+      schema: scriptDetailSchema,
+      timeoutMs: AI_TIMEOUT_MS,
+    }),
+  regenerateCaption: (id: string, instructions = ''): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}/caption/regenerate`, {
+      method: 'POST',
+      body: { instructions },
+      schema: scriptDetailSchema,
+      timeoutMs: AI_TIMEOUT_MS,
+    }),
+  setPreferred: (id: string): Promise<ScriptDetail> =>
+    apiRequest(`/scripts/${id}/preferred`, { method: 'PUT', schema: scriptDetailSchema }),
+  remove: (id: string) => apiRequest(`/scripts/${id}`, { method: 'DELETE', schema: deleted }),
+};
 export const promptPresetRepository = {
   list: (scope: PromptPreset['scope']): Promise<PromptPreset[]> =>
     apiRequest('/prompt-presets', { query: { scope }, schema: z.array(promptPresetSchema) }),

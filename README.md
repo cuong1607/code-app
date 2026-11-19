@@ -2,10 +2,11 @@
 
 Hệ thống web tự động lấy thông tin & ảnh sản phẩm, dùng AI viết kịch bản, tạo ảnh, tạo giọng đọc tiếng Việt, dựng video hàng loạt và quản lý lịch đăng TikTok.
 
-> **Trạng thái hiện tại: Giai đoạn 02 – Database, sản phẩm & thư viện media đã xong.** Sản phẩm, ảnh (MinIO), import
-> Excel/CSV, bản nháp và cài đặt lưu thật trong PostgreSQL. Chưa có AI, render video, đăng TikTok và **chưa có đăng nhập**
-> (chỉ dùng trên máy cục bộ). Xem [docs/ROADMAP.md](docs/ROADMAP.md), [docs/API.md](docs/API.md),
-> [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
+> **Trạng thái hiện tại: Giai đoạn 03 – AI Script Engine.** AI viết kịch bản tiếng Việt từ sản phẩm trong PostgreSQL
+> (Claude / OpenAI qua adapter server-side), nhiều biến thể, phiên bản, chi phí & ngân sách. Toàn bộ luồng đã kiểm thử với
+> **Mock provider**; gọi AI thật cần đặt API key (chưa xác minh trên máy dev). Chưa có ảnh AI, giọng đọc, render video, đăng
+> TikTok và **chưa có đăng nhập** (chỉ dùng trên máy cục bộ). Xem [docs/ROADMAP.md](docs/ROADMAP.md),
+> [docs/API.md](docs/API.md), [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
 
 > ⚠️ **Bảo mật:** API chạy chế độ `AUTH_MODE=dev-local` – KHÔNG có xác thực. Web và API chỉ nghe trên `127.0.0.1`;
 > API từ chối kết nối không đến từ máy cục bộ và từ chối khởi động khi `NODE_ENV=production`. Không mở cổng 3000/4000 ra Internet.
@@ -150,6 +151,7 @@ Mở VS Code từ WSL: `code .` (cần extension **WSL**). Trình duyệt Window
 | `pnpm test:integration`                                                     | Kiểm thử tích hợp API với PostgreSQL + MinIO thật (cần `infra:up` + `db:deploy`)     |
 | `pnpm test:e2e`                                                             | Build web rồi chạy Playwright trên dữ liệu thật (cần `pnpm dev:api` đang chạy)       |
 | `pnpm --filter @acs/web test:e2e:install`                                   | Cài trình duyệt Chromium cho Playwright (chạy 1 lần)                                 |
+| `pnpm ai:smoke` (`-- openai`, `-- --cleanup`)                               | Smoke test **AI thật** (cần API đang chạy + API key; **có phát sinh chi phí**)       |
 
 Screenshot của lần chạy E2E gần nhất nằm ở `apps/web/e2e-screenshots/` (không commit). Dữ liệu do test tạo
 (tiền tố SKU `IT…`, `IM…`, `E2E…`) được tự dọn sau khi chạy.
@@ -171,6 +173,34 @@ kiểm tra cột được ghép tự động → chọn cách xử lý SKU trùn
 `IMPORT_IMAGE_ALLOWED_HOSTS` có tên miền nguồn mà bạn có quyền sử dụng ảnh.
 
 **Xuất dữ liệu:** Sản phẩm → **Xuất file** → Excel hoặc CSV theo bộ lọc hiện tại.
+
+## 4c. Kịch bản AI (Phase 03)
+
+**1. Cấu hình API key (chỉ ở server).** Mở file `.env` ở thư mục gốc:
+
+```dotenv
+ANTHROPIC_API_KEY=sk-ant-...            # lấy ở console.anthropic.com
+ANTHROPIC_SCRIPT_MODEL=claude-opus-5-5  # tuỳ chọn; danh sách cho phép: ANTHROPIC_SCRIPT_MODELS
+# hoặc OpenAI (bắt buộc đặt model + đơn giá để ước tính chi phí):
+# OPENAI_API_KEY=...  OPENAI_SCRIPT_MODEL=...  OPENAI_PRICE_INPUT_PER_MTOK=...  OPENAI_PRICE_OUTPUT_PER_MTOK=...
+```
+
+Khởi động lại `pnpm dev`. Vào **Cài đặt › API Providers** → **Kiểm tra kết nối** (dùng Models API, không tốn token).
+Giao diện **không có ô nhập key** và không bao giờ nhận lại key. `AI_MOCK_PROVIDER_ENABLED=true` bật provider giả để thử
+offline (nội dung gắn nhãn MOCK, bị cấm ở production).
+
+**2. Đặt giới hạn.** Cài đặt › **Chi phí và ngân sách**: ngân sách mỗi lần tạo / mỗi ngày / tháng. Cài đặt › **AI Models**:
+provider, model, template mặc định, số phiên bản tối đa, số lời gọi đồng thời. Chi phí hiển thị là **ước tính** theo đơn giá
+cấu hình, không phải hoá đơn.
+
+**3. Tạo kịch bản đầu tiên.** Kịch bản AI → **Chọn sản phẩm** → chọn phong cách (Review, UGC, Storytelling, TikTok bán
+hàng…) → thời lượng, số phiên bản, đối tượng, giọng văn, kiểu hook/CTA → xem chi phí ước tính → **Tạo kịch bản bằng AI**.
+Các phiên bản được lưu tự động; so sánh trong bảng và chọn **bản tốt nhất**. Sửa ở các tab Kịch bản / Phân cảnh / Caption →
+**Lưu** (sửa phiên bản hiện tại) hoặc **Lưu thành phiên bản mới**. **Tạo lại cảnh** / **Tạo lại caption** dùng AI và luôn tạo
+phiên bản mới. Tab **Lời thoại** là văn bản sẽ dùng cho giọng đọc (Phase 05). **Dùng làm đầu vào tạo video** chuyển sang
+Xưởng video với kịch bản đã gắn.
+
+**4. Kiểm tra với AI thật:** `pnpm ai:smoke` – 3 sản phẩm × 4 phong cách + 3 biến thể + thử dữ liệu chứa chỉ dẫn độc hại.
 
 ---
 

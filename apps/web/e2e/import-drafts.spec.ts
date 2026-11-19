@@ -114,22 +114,26 @@ test('Lịch đăng: chọn luồng video, tạo lịch theo giờ VN, lưu DB, 
   await expect(page.getByText('Đã xoá 1 bài nháp')).toBeVisible();
 });
 
-test('Kịch bản: lưu nháp vào DB và mở lại', async ({ page }) => {
+test('Kịch bản: soạn tay từ khuôn mẫu (không AI), lưu DB và mở lại', async ({ page }) => {
   await page.goto('/studio/scripts');
-  await page.getByRole('button', { name: 'Bắt đầu từ khuôn mẫu' }).first().click();
-  await page.getByRole('button', { name: 'Chỉnh sửa' }).click();
-  await page.getByRole('textbox', { name: 'Tiêu đề' }).fill(`Kịch bản ${P}`);
-  await page.getByRole('button', { name: 'Lưu nháp' }).click();
-  await expect(page.getByText('Đã lưu kịch bản nháp vào database')).toBeVisible();
+  await page.getByRole('button', { name: 'Soạn tay từ khuôn mẫu' }).click();
+  const result = page.getByRole('region', { name: 'Kết quả kịch bản' });
+  await expect(result.getByText('TỪ KHUÔN MẪU – KHÔNG PHẢI AI')).toBeVisible();
+  await expect(result.getByText('Chưa lưu')).toBeVisible();
+  await result.getByLabel('Tiêu đề').fill(`Kịch bản ${P}`);
+  await result.getByRole('button', { name: 'Lưu', exact: true }).click();
+  await expect(page.getByText('Đã lưu kịch bản vào database')).toBeVisible();
   await page.reload();
-  const select = page.getByLabel('Chọn kịch bản đã lưu');
-  const value = await select.locator('option', { hasText: `Kịch bản ${P}` }).getAttribute('value');
+  const select = page.getByLabel('Mở kịch bản đã lưu');
+  const value = await select
+    .locator('option', { hasText: `Kịch bản ${P}` })
+    .first()
+    .getAttribute('value');
   await select.selectOption(value!);
-  // Tìm trong vùng kết quả (không phải thẻ <option> ẩn của ô chọn)
   await expect(
-    page.getByRole('region', { name: 'Kết quả kịch bản' }).getByText(`Kịch bản ${P}`),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Xoá kịch bản đang mở' }).click();
+    page.getByRole('region', { name: 'Kết quả kịch bản' }).getByLabel('Tiêu đề'),
+  ).toHaveValue(`Kịch bản ${P}`);
+  await page.getByRole('button', { name: 'Xoá kịch bản' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Xoá' }).click();
-  await expect(page.getByText('Đã xoá kịch bản nháp')).toBeVisible();
+  await expect(page.getByText(/Đã xoá kịch bản/)).toBeVisible();
 });

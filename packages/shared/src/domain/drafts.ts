@@ -34,6 +34,8 @@ export const videoDraftInputSchema = z.object({
     .max(4000, 'Prompt tối đa 4000 ký tự'),
   config: videoDraftConfigSchema,
   mediaAssetIds: z.array(z.uuid()).max(20).default([]),
+  /** Kịch bản (phiên bản cụ thể) dùng làm đầu vào – Phase 03 */
+  scriptId: z.uuid().nullable().default(null),
 });
 export type VideoDraftInput = z.infer<typeof videoDraftInputSchema>;
 
@@ -54,6 +56,8 @@ export const videoDraftSchema = z.object({
   prompt: z.string(),
   config: videoDraftConfigSchema,
   mediaAssetIds: z.array(z.uuid()),
+  scriptId: z.uuid().nullable(),
+  scriptTitle: z.string().nullable(),
   /** URL xem trước của các ảnh tham chiếu còn tồn tại */
   images: z.array(
     z.object({ id: z.uuid(), previewUrl: z.string().nullable(), filename: z.string() }),
@@ -106,47 +110,7 @@ export const publishingDraftSchema = z.object({
 });
 export type PublishingDraft = z.infer<typeof publishingDraftSchema>;
 
-// ------------------------------------------------------------------ Kịch bản
-export const scriptContentSchema = z.object({
-  title: z.string().trim().min(1, 'Thiếu tiêu đề').max(300),
-  hook: z.string().max(2000),
-  voiceover: z.string().max(10_000),
-  scenes: z
-    .array(
-      z.object({
-        order: z.number().int().min(1),
-        durationSeconds: z.number().min(0).max(600),
-        voiceover: z.string().max(2000),
-        visualPrompt: z.string().max(2000),
-        onScreenText: z.string().max(300).optional(),
-      }),
-    )
-    .max(50),
-  caption: z.string().max(PUBLISH_CAPTION_MAX),
-  hashtags: z.array(z.string().max(100)).max(PUBLISH_MAX_HASHTAGS),
-  cta: z.string().max(500),
-});
-export type ScriptContent = z.infer<typeof scriptContentSchema>;
-
-export const scriptDraftInputSchema = z.object({
-  productId: z.uuid().nullable(),
-  content: scriptContentSchema,
-  /** Cấu hình đã chọn (phong cách, thời lượng, giọng văn…) – không chứa dữ liệu nhạy cảm */
-  config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
-});
-export type ScriptDraftInput = z.infer<typeof scriptDraftInputSchema>;
-export const scriptDraftUpdateSchema = scriptDraftInputSchema.partial();
-
-export const scriptDraftSchema = z.object({
-  id: z.uuid(),
-  productId: z.uuid().nullable(),
-  productName: z.string().nullable(),
-  content: scriptContentSchema,
-  config: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-});
-export type ScriptDraft = z.infer<typeof scriptDraftSchema>;
+// Kịch bản: xem ./script-engine.ts (Phase 03 – thay cho scriptContentSchema v1 của Phase 02)
 
 // ------------------------------------------------------------------ Prompt đã lưu
 export const PROMPT_SCOPES = ['video', 'script', 'image'] as const;

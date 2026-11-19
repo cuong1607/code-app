@@ -1,6 +1,18 @@
 import { z } from 'zod';
 import { DEFAULT_DISPLAY_TIMEZONE, DEFAULT_LOCALE } from '../constants';
+import { SCRIPT_PROVIDER_IDS } from './script-engine';
 import { ASPECT_RATIOS, VIDEO_DURATIONS, VIDEO_MODES, VIDEO_QUALITIES } from './video';
+
+const AI_DEFAULTS = {
+  defaultProvider: null,
+  defaultModel: null,
+  defaultTemplateId: 'review',
+  maxVariants: 5,
+  maxConcurrentRequests: 2,
+  perGenerationBudgetUsd: 1,
+  dailyBudgetUsd: 5,
+  includePriceByDefault: false,
+};
 
 /**
  * Cài đặt KHÔNG nhạy cảm của workspace.
@@ -69,6 +81,22 @@ export const appPreferencesSchema = z
       })
       .strict()
       .default({ tempRetentionDays: 7 }),
+    /** AI Script Engine (Phase 03). Không chứa API key – key chỉ ở biến môi trường server. */
+    ai: z
+      .object({
+        /** null = dùng AI_SCRIPT_PROVIDER ở server, hoặc provider đầu tiên đã cấu hình */
+        defaultProvider: z.enum(SCRIPT_PROVIDER_IDS).nullable().default(null),
+        /** null = model mặc định của provider */
+        defaultModel: z.string().max(100).nullable().default(null),
+        defaultTemplateId: z.string().max(60).default('review'),
+        maxVariants: z.number().int().min(1).max(10).default(5),
+        maxConcurrentRequests: z.number().int().min(1).max(5).default(2),
+        perGenerationBudgetUsd: z.number().min(0).max(1000).default(1),
+        dailyBudgetUsd: z.number().min(0).max(10_000).default(5),
+        includePriceByDefault: z.boolean().default(false),
+      })
+      .strict()
+      .default(AI_DEFAULTS),
   })
   .strict();
 export type AppPreferences = z.infer<typeof appPreferencesSchema>;

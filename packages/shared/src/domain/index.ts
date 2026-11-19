@@ -4,5 +4,7 @@ export * from './import';
 export * from './media';
 export * from './product';
 export * from './publish';
+export * from './script-engine';
+export * from './script-quality';
 export * from './settings';
 export * from './video';

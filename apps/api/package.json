@@ -18,10 +18,12 @@
     "prisma:deploy": "dotenv run -q -f ../../.env -- prisma migrate deploy",
     "prisma:studio": "dotenv run -q -f ../../.env -- prisma studio",
     "prisma:seed": "dotenv run -q -f ../../.env -- tsx prisma/seed.ts",
+    "ai:smoke": "tsx scripts/ai-smoke.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
     "@acs/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^1.10.0",
     "@aws-sdk/client-s3": "^3.1172.0",
     "@aws-sdk/s3-request-presigner": "^3.1172.0",
     "@nestjs/common": "^11.2.11",
@@ -35,6 +37,7 @@
     "exceljs": "^4.4.0",
     "image-size": "^2.1.0",
     "ioredis": "^5.11.1",
+    "openai": "^7.60.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.6.7"

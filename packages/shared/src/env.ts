@@ -47,6 +47,39 @@ const aiEnvSchema = z.object({
   ELEVENLABS_API_KEY: optionalString,
 });
 
+const optionalNumber = z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional());
+
+/** Cấu hình AI Script Engine (Phase 03) – chỉ ở server. */
+const aiScriptEnvSchema = z.object({
+  /** Model Claude dùng cho kịch bản (đổi được mà không sửa code) */
+  ANTHROPIC_SCRIPT_MODEL: z.preprocess(emptyToUndefined, z.string().default('claude-opus-5-5')),
+  /** Danh sách model Claude cho phép chọn (phân tách dấu phẩy) */
+  ANTHROPIC_SCRIPT_MODELS: z.preprocess(
+    emptyToUndefined,
+    z.string().default('claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5'),
+  ),
+  ANTHROPIC_SCRIPT_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  /** OpenAI: không đặt model mặc định trong code để tránh model ID lỗi thời */
+  OPENAI_SCRIPT_MODEL: optionalString,
+  OPENAI_SCRIPT_MODELS: optionalString,
+  /** Đơn giá OpenAI (USD / 1 triệu token). Thiếu -> không ước tính được chi phí -> bị từ chối. */
+  OPENAI_PRICE_INPUT_PER_MTOK: optionalNumber,
+  OPENAI_PRICE_OUTPUT_PER_MTOK: optionalNumber,
+  OPENAI_SUPPORTS_TEMPERATURE: booleanFromString.default(false),
+  AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
+  /** Số lần thử lại khi lỗi tạm thời (429/5xx/mạng) */
+  AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  /** Số lần yêu cầu AI sửa khi JSON không hợp lệ */
+  AI_MAX_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(1),
+  AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(1_000).max(64_000).default(12_000),
+  /** Giới hạn số lệnh tạo AI / phút / workspace */
+  AI_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(20),
+  /** Số lời gọi AI đồng thời tối đa của cả API */
+  AI_MAX_CONCURRENT_REQUESTS: z.coerce.number().int().min(1).max(20).default(4),
+  /** Bật MockScriptProvider (offline/test). Cấm trong production. */
+  AI_MOCK_PROVIDER_ENABLED: booleanFromString.default(false),
+});
+
 /** Workspace phát triển cố định (seed tạo sẵn). KHÔNG phải xác thực. */
 export const DEV_WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -54,6 +87,7 @@ export const apiEnvSchema = commonEnvSchema
   .extend(redisEnvSchema.shape)
   .extend(s3EnvSchema.shape)
   .extend(aiEnvSchema.shape)
+  .extend(aiScriptEnvSchema.shape)
   .extend({
     API_PORT: port.default(4000),
     // Mặc định chỉ nghe trên loopback: API chưa có xác thực (Phase 09)
@@ -102,6 +136,13 @@ export const apiEnvSchema = commonEnvSchema
         path: ['AUTH_MODE'],
         message:
           'AUTH_MODE=dev-local KHÔNG được phép khi NODE_ENV=production (chưa có xác thực thật – dự kiến Phase 09)',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.AI_MOCK_PROVIDER_ENABLED) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_MOCK_PROVIDER_ENABLED'],
+        message: 'Không được bật MockScriptProvider khi NODE_ENV=production',
       });
     }
   });

@@ -6,8 +6,6 @@ import {
   createVideoDraftsSchema,
   promptPresetInputSchema,
   publishingDraftUpdateSchema,
-  scriptDraftInputSchema,
-  scriptDraftUpdateSchema,
   videoDraftUpdateSchema,
 } from '@acs/shared';
 import { WorkspaceId } from '../auth/workspace.guard';
@@ -79,31 +77,6 @@ export class PublishingDraftsController {
   @Delete(':id')
   remove(@WorkspaceId() ws: string, @Param('id') id: string) {
     return this.drafts.deletePublishing(ws, [parseId(id)]);
-  }
-}
-
-@Controller('drafts/scripts')
-export class ScriptDraftsController {
-  constructor(private readonly drafts: DraftsService) {}
-
-  @Get()
-  list(@WorkspaceId() ws: string) {
-    return this.drafts.listScripts(ws);
-  }
-
-  @Post()
-  create(@WorkspaceId() ws: string, @Body() body: unknown) {
-    return this.drafts.createScript(ws, parseInput(scriptDraftInputSchema, body));
-  }
-
-  @Patch(':id')
-  update(@WorkspaceId() ws: string, @Param('id') id: string, @Body() body: unknown) {
-    return this.drafts.updateScript(ws, parseId(id), parseInput(scriptDraftUpdateSchema, body));
-  }
-
-  @Delete(':id')
-  remove(@WorkspaceId() ws: string, @Param('id') id: string) {
-    return this.drafts.deleteScript(ws, parseId(id));
   }
 }
 

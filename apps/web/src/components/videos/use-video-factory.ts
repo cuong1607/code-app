@@ -10,6 +10,7 @@ import {
   VIDEO_TEMPLATES,
   VOICES,
   productRepository,
+  scriptRepository,
   videoDraftRepository,
 } from '@/lib/data';
 import { formatMoney } from '@/lib/format';
@@ -50,8 +51,17 @@ function batchKeyNow(): string {
  * - Luồng sản xuất là BẢN NHÁP LƯU TRONG POSTGRESQL (API /drafts/video). Chưa render (Phase 06/07).
  * - Sản phẩm & ảnh lấy từ API thật.
  */
-export function useVideoFactory(initialProductIds: string[] = []) {
+export function useVideoFactory(
+  initialProductIds: string[] = [],
+  initialScriptId: string | null = null,
+) {
   const [config, setConfig] = useState<FactoryConfig>(DEFAULT_CONFIG);
+  /** Kịch bản (phiên bản cụ thể) dùng làm đầu vào – chọn từ trang Kịch bản AI (?script=id) */
+  const [scriptId, setScriptId] = useState<string | null>(initialScriptId);
+  const script = useAsync(
+    () => (scriptId ? scriptRepository.get(scriptId) : Promise.resolve(null)),
+    [scriptId ?? ''],
+  );
   const [selected, setSelected] = useState<SelectedProduct[]>([]);
   const drafts = useAsync(() => videoDraftRepository.list(), []);
   const [creating, setCreating] = useState(false);
@@ -187,6 +197,8 @@ export function useVideoFactory(initialProductIds: string[] = []) {
           templateId: config.templateId,
         },
         mediaAssetIds: ordered.map((i) => i.id),
+        // Gắn kịch bản cho đúng sản phẩm của kịch bản đó
+        scriptId: script.data && script.data.productId === product.id ? script.data.id : null,
       }));
     });
     setCreating(true);
@@ -199,7 +211,7 @@ export function useVideoFactory(initialProductIds: string[] = []) {
     } finally {
       setCreating(false);
     }
-  }, [selected, config, drafts]);
+  }, [selected, config, drafts, script.data]);
 
   const removeDrafts = useCallback(
     async (ids: readonly string[]) => {
@@ -234,6 +246,9 @@ export function useVideoFactory(initialProductIds: string[] = []) {
     draftsLoading: drafts.loading && !drafts.data,
     draftsError: drafts.error,
     reloadDrafts: drafts.reload,
+    script: script.data ?? null,
+    scriptError: script.error,
+    clearScript: () => setScriptId(null),
   };
 }
 

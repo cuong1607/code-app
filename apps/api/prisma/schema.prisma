@@ -42,6 +42,7 @@ model Workspace {
   publishingDrafts PublishingDraft[]
   scriptDrafts     ScriptDraft[]
   promptPresets    PromptPreset[]
+  aiUsages         AiUsage[]
 
   @@map("workspaces")
 }
@@ -232,11 +233,14 @@ model VideoDraft {
   prompt        String
   config        Json
   mediaAssetIds String[] @default([]) @map("media_asset_ids") @db.Uuid
+  /// Phiên bản kịch bản dùng làm đầu vào (Phase 03)
+  scriptId      String?  @map("script_id") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   product          Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  script           ScriptDraft?      @relation(fields: [scriptId], references: [id], onDelete: SetNull)
   publishingDrafts PublishingDraft[]
 
   @@index([workspaceId, createdAt])
@@ -274,22 +278,103 @@ model PublishingDraft {
   @@map("publishing_drafts")
 }
 
-/// Kịch bản nháp (soạn/sửa thủ công; AI ở Phase 03).
-model ScriptDraft {
-  id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
-  productId   String?  @map("product_id") @db.Uuid
-  title       String   @db.VarChar(300)
-  content     Json
-  config      Json     @default("{}")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+enum ScriptOrigin {
+  ai
+  manual
+  sample
+  legacy
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  @@map("script_origin")
+}
+
+enum ScriptValidationStatus {
+  valid
+  warnings
+  invalid
+  unchecked
+
+  @@map("script_validation_status")
+}
+
+/// Kịch bản (mỗi dòng = MỘT PHIÊN BẢN). Các phiên bản của cùng kịch bản chung root_id.
+/// Tạo lại (cảnh/caption) hoặc "lưu phiên bản mới" luôn tạo dòng mới – không ghi đè bản cũ.
+/// content = ScriptDocument v2 (dòng Phase 02 dạng v1 được nâng cấp khi đọc, không ghi đè).
+model ScriptDraft {
+  id                String                 @id @default(uuid()) @db.Uuid
+  workspaceId       String                 @map("workspace_id") @db.Uuid
+  productId         String?                @map("product_id") @db.Uuid
+  /// Phiên bản đầu tiên của kịch bản (= id của chính nó với v1)
+  rootId            String?                @map("root_id") @db.Uuid
+  parentId          String?                @map("parent_id") @db.Uuid
+  versionNumber     Int                    @default(1) @map("version_number")
+  origin            ScriptOrigin           @default(manual)
+  changeNote        String?                @map("change_note") @db.VarChar(200)
+  templateId        String?                @map("template_id") @db.VarChar(60)
+  templateVersion   String?                @map("template_version") @db.VarChar(20)
+  provider          String?                @db.VarChar(40)
+  model             String?                @db.VarChar(100)
+  style             String?                @db.VarChar(60)
+  targetDurationSec Int?                   @map("target_duration_sec")
+  title             String                 @db.VarChar(300)
+  hook              String?
+  narration         String?
+  caption           String?
+  hashtags          String[]               @default([])
+  cta               String?                @db.VarChar(300)
+  /// ScriptDocument (gồm scenes) – đã validate bằng scriptDocumentSchema
+  content           Json
+  /// Danh sách ScriptIssue tại thời điểm lưu
+  issues            Json                   @default("[]")
+  validationStatus  ScriptValidationStatus @default(unchecked) @map("validation_status")
+  /// Các biến thể tạo cùng lúc chung variant_group_id
+  variantGroupId    String?                @map("variant_group_id") @db.Uuid
+  variantIndex      Int?                   @map("variant_index")
+  angleId           String?                @map("angle_id") @db.VarChar(60)
+  isPreferred       Boolean                @default(false) @map("is_preferred")
+  config            Json                   @default("{}")
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product     Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  parent      ScriptDraft?  @relation("ScriptVersions", fields: [parentId], references: [id], onDelete: SetNull)
+  children    ScriptDraft[] @relation("ScriptVersions")
+  usages      AiUsage[]
+  videoDrafts VideoDraft[]
 
   @@index([workspaceId, updatedAt])
+  @@index([workspaceId, rootId, versionNumber])
+  @@index([workspaceId, variantGroupId])
   @@map("script_drafts")
+}
+
+/// Nhật ký sử dụng AI (mỗi lần gọi API = 1 dòng). Chi phí là ƯỚC TÍNH theo đơn giá cấu hình.
+model AiUsage {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @map("workspace_id") @db.Uuid
+  provider         String    @db.VarChar(40)
+  model            String    @db.VarChar(100)
+  /// script_generate | scene_regenerate | caption_generate | provider_check
+  feature          String    @db.VarChar(40)
+  /// success | failed | invalid_output | refused | rejected_budget
+  status           String    @db.VarChar(30)
+  generationId     String?   @map("generation_id") @db.Uuid
+  scriptDraftId    String?   @map("script_draft_id") @db.Uuid
+  inputTokens      Int?      @map("input_tokens")
+  outputTokens     Int?      @map("output_tokens")
+  estimatedCostUsd Decimal?  @map("estimated_cost_usd") @db.Decimal(12, 6)
+  /// Chỉ điền khi provider trả chi phí thật đáng tin cậy (hiện chưa provider nào)
+  actualCostUsd    Decimal?  @map("actual_cost_usd") @db.Decimal(12, 6)
+  latencyMs        Int?      @map("latency_ms")
+  errorCode        String?   @map("error_code") @db.VarChar(60)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scriptDraft ScriptDraft? @relation(fields: [scriptDraftId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([generationId])
+  @@map("ai_usage")
 }
 
 /// Prompt người dùng lưu lại để dùng lại.

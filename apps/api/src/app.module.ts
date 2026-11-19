@@ -12,6 +12,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { DraftsModule } from './drafts/drafts.module';
 import { MediaModule } from './media/media.module';
 import { ProductsModule } from './products/products.module';
+import { ScriptsModule } from './scripts/scripts.module';
 import { SettingsModule } from './settings/settings.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { AppConfigModule } from './config/app-config.module';
@@ -37,6 +38,7 @@ export class AppModule implements NestModule {
         MediaModule,
         ProductsModule,
         DraftsModule,
+        ScriptsModule,
         SettingsModule,
         DashboardModule,
       ],

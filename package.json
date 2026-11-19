@@ -37,6 +37,7 @@
     "db:studio": "pnpm --filter @acs/api prisma:studio",
     "db:validate": "pnpm --filter @acs/api prisma:validate",
     "db:seed": "pnpm --filter @acs/api prisma:seed",
+    "ai:smoke": "pnpm build:packages && pnpm --filter @acs/api ai:smoke",
     "health": "node scripts/check-health.mjs"
   },
   "devDependencies": {

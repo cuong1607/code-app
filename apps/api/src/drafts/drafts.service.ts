@@ -1,9 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type {
-  PublishingDraft as PublishingRow,
-  ScriptDraft as ScriptRow,
-  VideoDraft as VideoRow,
-} from '@prisma/client';
+import type { PublishingDraft as PublishingRow, VideoDraft as VideoRow } from '@prisma/client';
 import { z } from 'zod';
 import {
   AppError,
@@ -11,14 +7,10 @@ import {
   type PromptPresetInput,
   type PublishingDraft,
   type PublishingDraftInput,
-  type ScriptDraft,
-  type ScriptDraftInput,
   type VideoDraft,
   type VideoDraftConfig,
   type VideoDraftInput,
   publishingDraftUpdateSchema,
-  scriptContentSchema,
-  scriptDraftUpdateSchema,
   videoDraftConfigSchema,
   videoDraftUpdateSchema,
 } from '@acs/shared';
@@ -29,7 +21,8 @@ import { StorageService } from '../storage/storage.service';
 
 type VideoUpdate = z.output<typeof videoDraftUpdateSchema>;
 type PublishingUpdate = z.output<typeof publishingDraftUpdateSchema>;
-type ScriptUpdate = z.output<typeof scriptDraftUpdateSchema>;
+type VideoRowWithScript = VideoRow & { script?: { title: string } | null };
+const withScript = { script: { select: { title: true } } } as const;
 
 /** Lưu bản nháp vào PostgreSQL. Mọi truy vấn lọc theo workspaceId (cô lập dữ liệu). */
 @Injectable()
@@ -40,7 +33,7 @@ export class DraftsService {
   ) {}
 
   // ================================================================== Video Factory
-  private async toVideoDto(row: VideoRow): Promise<VideoDraft> {
+  private async toVideoDto(row: VideoRowWithScript): Promise<VideoDraft> {
     const assets = row.mediaAssetIds.length
       ? await this.prisma.mediaAsset.findMany({
           where: { id: { in: row.mediaAssetIds }, workspaceId: row.workspaceId },
@@ -66,6 +59,8 @@ export class DraftsService {
       prompt: row.prompt,
       config: videoDraftConfigSchema.parse(row.config) as VideoDraftConfig,
       mediaAssetIds: row.mediaAssetIds,
+      scriptId: row.scriptId,
+      scriptTitle: row.script?.title ?? null,
       images,
       status: 'draft',
       createdAt: row.createdAt.toISOString(),
@@ -78,6 +73,7 @@ export class DraftsService {
       where: { workspaceId: ws },
       orderBy: { createdAt: 'desc' },
       take: 1000,
+      include: withScript,
     });
     return Promise.all(rows.map((r) => this.toVideoDto(r)));
   }
@@ -98,6 +94,14 @@ export class DraftsService {
     });
     if (owned !== mediaIds.length)
       throw new AppError('NOT_FOUND', 'Có ảnh không tồn tại trong workspace');
+    const scriptIds = [
+      ...new Set(drafts.map((d) => d.scriptId).filter((id): id is string => Boolean(id))),
+    ];
+    const ownedScripts = await this.prisma.scriptDraft.count({
+      where: { id: { in: scriptIds }, workspaceId: ws },
+    });
+    if (ownedScripts !== scriptIds.length)
+      throw new AppError('NOT_FOUND', 'Có kịch bản không tồn tại trong workspace');
     const nameOf = new Map(products.map((p) => [p.id, p.name]));
 
     const rows = await this.prisma.$transaction(
@@ -112,7 +116,9 @@ export class DraftsService {
             prompt: d.prompt,
             config: d.config,
             mediaAssetIds: d.mediaAssetIds,
+            scriptId: d.scriptId,
           },
+          include: withScript,
         }),
       ),
     );
@@ -128,6 +134,7 @@ export class DraftsService {
         ...(patch.prompt !== undefined && { prompt: patch.prompt }),
         ...(patch.config !== undefined && { config: patch.config }),
       },
+      include: withScript,
     });
     return this.toVideoDto(row);
   }
@@ -235,74 +242,6 @@ export class DraftsService {
     });
     if (!count) throw new AppError('NOT_FOUND', 'Không tìm thấy bài đăng nháp');
     return { deleted: count };
-  }
-
-  // ================================================================== Kịch bản
-  private async toScriptDto(
-    row: ScriptRow & { product?: { name: string } | null },
-  ): Promise<ScriptDraft> {
-    return {
-      id: row.id,
-      productId: row.productId,
-      productName: row.product?.name ?? null,
-      content: scriptContentSchema.parse(row.content),
-      config: (row.config ?? {}) as ScriptDraft['config'],
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    };
-  }
-
-  async listScripts(ws: string): Promise<ScriptDraft[]> {
-    const rows = await this.prisma.scriptDraft.findMany({
-      where: { workspaceId: ws },
-      orderBy: { updatedAt: 'desc' },
-      take: 200,
-      include: { product: { select: { name: true } } },
-    });
-    return Promise.all(rows.map((r) => this.toScriptDto(r)));
-  }
-
-  async createScript(ws: string, input: ScriptDraftInput): Promise<ScriptDraft> {
-    await this.assertProduct(ws, input.productId);
-    const row = await this.prisma.scriptDraft.create({
-      data: {
-        workspaceId: ws,
-        productId: input.productId,
-        title: input.content.title,
-        content: input.content,
-        config: input.config,
-      },
-      include: { product: { select: { name: true } } },
-    });
-    return this.toScriptDto(row);
-  }
-
-  async updateScript(ws: string, id: string, patch: ScriptUpdate): Promise<ScriptDraft> {
-    const found = await this.prisma.scriptDraft.count({ where: { id, workspaceId: ws } });
-    if (!found) throw new AppError('NOT_FOUND', 'Không tìm thấy kịch bản nháp');
-    if (patch.productId !== undefined) await this.assertProduct(ws, patch.productId);
-    const row = await this.prisma.scriptDraft.update({
-      where: { id },
-      data: {
-        ...(patch.productId !== undefined && { productId: patch.productId }),
-        ...(patch.content !== undefined && { content: patch.content, title: patch.content.title }),
-        ...(patch.config !== undefined && { config: patch.config }),
-      },
-      include: { product: { select: { name: true } } },
-    });
-    return this.toScriptDto(row);
-  }
-
-  async deleteScript(ws: string, id: string): Promise<{ deleted: number }> {
-    const { count } = await this.prisma.scriptDraft.deleteMany({ where: { id, workspaceId: ws } });
-    if (!count) throw new AppError('NOT_FOUND', 'Không tìm thấy kịch bản nháp');
-    return { deleted: count };
-  }
-
-  private async assertProduct(ws: string, productId: string | null) {
-    if (!productId) return;
-    const found = await this.prisma.product.count({ where: { id: productId, workspaceId: ws } });
-    if (!found) throw new AppError('NOT_FOUND', 'Không tìm thấy sản phẩm');
   }
 
   // ================================================================== Prompt đã lưu

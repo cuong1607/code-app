@@ -56,14 +56,14 @@ const GROUPS = [
     id: 'providers',
     label: 'API Providers',
     icon: KeyRound,
-    desc: 'Khoá truy cập dịch vụ AI',
+    desc: 'Trạng thái nhà cung cấp AI (key ở server)',
     render: ProviderSettings,
   },
   {
     id: 'models',
     label: 'AI Models',
     icon: Bot,
-    desc: 'Mô hình cho từng chức năng',
+    desc: 'Model, template & giới hạn AI kịch bản',
     render: ModelSettings,
   },
   {
@@ -112,7 +112,15 @@ const GROUPS = [
 
 type GroupId = (typeof GROUPS)[number]['id'];
 /** Nhóm có lưu vào database (cài đặt KHÔNG nhạy cảm). Các nhóm còn lại cấu hình ở server/phase sau. */
-const SAVEABLE = new Set<GroupId>(['general', 'voices', 'video', 'storage', 'batch', 'cost']);
+const SAVEABLE = new Set<GroupId>([
+  'general',
+  'models',
+  'voices',
+  'video',
+  'storage',
+  'batch',
+  'cost',
+]);
 
 export function SettingsView() {
   const router = useRouter();
@@ -143,7 +151,7 @@ export function SettingsView() {
         description="Cấu hình workspace, nhà cung cấp AI, mặc định sản xuất và tích hợp."
       />
       <DemoNotice tone="info">
-        Cài đặt chung, video, giọng đọc, batch, chi phí và storage được{' '}
+        Cài đặt chung, AI models, video, giọng đọc, batch, chi phí và storage được{' '}
         <strong>lưu vào database</strong>. API key và thông tin bí mật chỉ cấu hình ở server (biến
         môi trường) – không bao giờ lưu ở trình duyệt hay database.
       </DemoNotice>

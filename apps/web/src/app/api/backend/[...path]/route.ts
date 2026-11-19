@@ -7,10 +7,18 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { nowUtcIso, toErrorMessage } from '@acs/shared';
 
 const TIMEOUT_MS = 30_000;
+/**
+ * Lệnh gọi AI (tạo kịch bản nhiều biến thể) có thể mất vài phút.
+ * Giữ dưới 300 giây (giới hạn chờ header mặc định của fetch trong Node).
+ */
+const AI_TIMEOUT_MS = 280_000;
+const AI_ROUTE = /^scripts\/(generate|[^/]+\/scenes\/\d+\/regenerate|[^/]+\/caption\/regenerate)$/;
 const FORWARD_HEADERS = ['content-type', 'accept', 'x-request-id'];
 
 async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  const timeoutMs =
+    req.method === 'POST' && AI_ROUTE.test(path.join('/')) ? AI_TIMEOUT_MS : TIMEOUT_MS;
   const base = (process.env.API_INTERNAL_URL ?? 'http://localhost:4000').replace(/\/$/, '');
   const target = `${base}/${path.map(encodeURIComponent).join('/')}${req.nextUrl.search}`;
 
@@ -25,7 +33,7 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
       method: req.method,
       headers,
       body: req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer(),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       cache: 'no-store',
     });
     const responseHeaders = new Headers();

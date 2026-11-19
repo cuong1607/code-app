@@ -92,31 +92,7 @@ export const VIDEO_PROMPT_TEMPLATES: PromptTemplate[] = [
 
 export const DEFAULT_VIDEO_PROMPT = VIDEO_PROMPT_TEMPLATES[5]!.content;
 
-export const SCRIPT_STYLES = [
-  { id: 'review', name: 'Review sản phẩm' },
-  { id: 'ads', name: 'Quảng cáo bán hàng' },
-  { id: 'storytelling', name: 'Storytelling' },
-  { id: 'ugc', name: 'UGC' },
-  { id: 'fashion', name: 'Giới thiệu thời trang' },
-  { id: 'closing', name: 'Chốt đơn' },
-  { id: 'tiktok-short', name: 'Nội dung TikTok ngắn' },
-] as const;
-
-export const SCRIPT_TONES = [
-  { id: 'friendly', name: 'Thân thiện, gần gũi' },
-  { id: 'energetic', name: 'Năng động, hào hứng' },
-  { id: 'premium', name: 'Sang trọng, tinh tế' },
-  { id: 'humorous', name: 'Hài hước' },
-  { id: 'expert', name: 'Chuyên gia, tin cậy' },
-] as const;
-
-export const AUDIENCES = [
-  { id: 'gen-z', name: 'Gen Z (18–24)' },
-  { id: 'office', name: 'Dân văn phòng (25–35)' },
-  { id: 'parents', name: 'Bố mẹ trẻ' },
-  { id: 'premium', name: 'Khách hàng cao cấp' },
-  { id: 'students', name: 'Học sinh – sinh viên' },
-] as const;
+// Phong cách / giọng văn / đối tượng kịch bản: lấy từ API (/scripts/templates) và @acs/shared (Phase 03)
 
 export const IMAGE_TEMPLATES = [
   { id: 'ad', name: 'Ảnh quảng cáo sản phẩm', hint: 'Nền sạch, chữ nổi bật' },

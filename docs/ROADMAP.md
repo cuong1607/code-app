@@ -156,10 +156,72 @@ Ghi chú kỹ thuật GĐ 02:
 - Import xử lý đồng bộ trong request (≤ 5.000 dòng); file lớn hơn nên chạy qua hàng đợi ở phase sau.
 - Thanh tiến độ upload là trạng thái từng file (chưa đo % byte).
 
-## Giai đoạn 03 – Kịch bản AI (⬜)
+## Giai đoạn 03 – AI Script Engine (🟡 hoàn thành phần code & kiểm thử – CHƯA xác minh với AI thật)
 
-- Triển khai `ScriptProvider` đầu tiên (server-only), quản lý prompt template.
-- Lưu phiên bản kịch bản, chỉnh sửa tay, theo dõi `usage`/chi phí.
+Cập nhật lần cuối: 2026-11-19 (UTC). Checkpoint trước khi sửa: tag `checkpoint-before-phase-03` (= commit `05bef20`).
+
+> ⚠️ Máy dev **chưa có** `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` → toàn bộ luồng đã chạy thật với PostgreSQL nhưng
+> qua **MockScriptProvider** (không gọi AI). Lời gọi Anthropic/OpenAI thật **chưa được xác minh**. Sau khi đặt key:
+> `pnpm ai:smoke` (3 sản phẩm × 4 phong cách + 3 biến thể + kiểm tra prompt injection, có phát sinh chi phí).
+
+### Database
+
+Migration `20261119115444_phase03_ai_script_engine` – **chỉ thêm** (không DROP/đổi cột):
+
+- `script_drafts` thêm: `root_id`, `parent_id` (phiên bản), `version_number`, `origin` (`ai|manual|sample|legacy`),
+  `change_note`, `template_id`, `template_version`, `provider`, `model`, `style`, `target_duration_sec`, `hook`,
+  `narration`, `caption`, `hashtags[]`, `cta`, `issues` (JSON), `validation_status`, `variant_group_id`, `variant_index`,
+  `angle_id`, `is_preferred` + index.
+- Bảng mới `ai_usage` (mỗi lần gọi API = 1 dòng: provider, model, chức năng, token vào/ra, chi phí **ước tính**,
+  `actual_cost_usd` để trống, độ trễ, trạng thái, mã lỗi).
+- `video_drafts.script_id` (kịch bản làm đầu vào video).
+- Dữ liệu Phase 02: SQL chỉ đặt `root_id = id`, `origin = 'legacy'`. Nội dung JSON v1 được **nâng cấp khi đọc**
+  (`upgradeScriptContent`), chỉ ghi v2 khi người dùng bấm Lưu – có integration test xác nhận.
+
+| #   | Hạng mục                                                                                                                                                                                                                                                    | Trạng thái | Cách kiểm chứng                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| 1   | `ScriptProvider` interface: `generateScript`, `generateVariations`, `regenerateScene`, `generateCaption`, `validateConfiguration`                                                                                                                           | ✅         | `packages/shared/src/providers/script.ts`                                                                   |
+| 2   | `ClaudeScriptProvider` (SDK `@anthropic-ai/sdk` 1.10, structured outputs `json_schema`, effort cấu hình được, server-side fallback, Models API)                                                                                                             | 🟡         | Unit với client giả (tham số gửi đi, đọc text sau khối fallback, refusal, phân loại lỗi). **Chưa gọi thật** |
+| 3   | `OpenAIScriptProvider` (SDK `openai` 7.60, Responses API, `json_schema` strict, `store=false`, model bắt buộc qua env)                                                                                                                                      | 🟡         | Unit với client giả. **Chưa gọi thật**                                                                      |
+| 4   | `MockScriptProvider` (offline/test, nhãn `[MOCK]`, cấm production)                                                                                                                                                                                          | ✅         | Unit + Integration + E2E                                                                                    |
+| 5   | Prompt 4 tầng: system rules cố định · product facts (whitelist, escape, dữ liệu không tin cậy) · creative brief · output contract                                                                                                                           | ✅         | Unit: dữ liệu không thể đóng thẻ `<product_data>`, không có giá vốn/URL đầy đủ                              |
+| 6   | 8 template phiên bản hoá (review, UGC, storytelling, TikTok bán hàng, thời trang, quảng cáo, so sánh*, tuỳ chỉnh*) + 10 hướng triển khai biến thể                                                                                                           | ✅         | Unit + Integration (so sánh thiếu SP thứ 2 → 422)                                                           |
+| 7   | Kiểm tra output: Zod strict → dựng `ScriptDocument` (server tự ghép narration) → lint (thứ tự cảnh, hook, thời lượng, TTS, giá/khuyến mãi bịa, hashtag, CTA)                                                                                                | ✅         | Unit; lỗi → yêu cầu AI sửa tối đa `AI_MAX_REPAIR_ATTEMPTS` lần                                              |
+| 8   | Retry có giới hạn (429/5xx/timeout/mạng, backoff có trần), không retry lỗi xác thực/từ chối                                                                                                                                                                 | ✅         | Unit                                                                                                        |
+| 9   | Biến thể 1/3/5/10, giới hạn đồng thời, lỗi một phần giữ bản thành công, cảnh báo hook na ná, chọn bản tốt nhất                                                                                                                                              | ✅         | Integration (2/3 thành công) + E2E                                                                          |
+| 10  | API `/scripts`: templates, providers (+kiểm tra), estimate, generate, list, detail, sửa, lưu phiên bản mới, tạo lại cảnh, tạo lại caption, chọn bản tốt nhất, xoá, usage                                                                                    | ✅         | Integration 18 test                                                                                         |
+| 11  | Phiên bản: tạo lại / "lưu phiên bản mới" luôn tạo dòng mới, không ghi đè bản cũ                                                                                                                                                                             | ✅         | Integration v1→v4, kiểm tra v1/v2 không đổi                                                                 |
+| 12  | Usage & ngân sách: ghi từng lời gọi, chi phí ước tính, ngân sách mỗi lần/ngày (giờ VN)/tháng, giữ chỗ khi chạy song song, thiếu đơn giá → từ chối, rate limit/phút, semaphore toàn API                                                                      | ✅         | Unit + Integration (402 khi không có đơn giá, không gọi provider)                                           |
+| 13  | Cô lập workspace + chống prompt injection                                                                                                                                                                                                                   | ✅         | Integration: kịch bản/sản phẩm workspace khác → 404; client gửi `workspaceId` → 422                         |
+| 14  | `/studio/scripts`: chọn sản phẩm DB (ảnh, SKU, thuộc tính), template, provider/model, thời lượng, biến thể, đối tượng, giọng văn, hook, CTA, giá, prompt bổ sung + preset, ước tính chi phí; 5 tab; trạng thái Đang tạo/Hoàn thành/Thất bại/Chưa lưu/Đã lưu | ✅         | E2E (Mock): tạo 3 bản → tab → sửa → lưu phiên bản mới → tạo lại cảnh → reload còn                           |
+| 15  | Kịch bản làm đầu vào Video Factory (`?script=`, `video_drafts.script_id`)                                                                                                                                                                                   | ✅         | Integration + E2E                                                                                           |
+| 16  | Cài đặt: trạng thái provider thật + "Kiểm tra kết nối", model/template mặc định, giới hạn biến thể/đồng thời, ngân sách, bảng usage; bỏ ô nhập API key                                                                                                      | ✅         | E2E                                                                                                         |
+| 17  | Smoke test AI thật (`pnpm ai:smoke`)                                                                                                                                                                                                                        | ❌         | Đã viết, chạy thử → dừng đúng với "AI thật CHƯA được xác minh" vì chưa có key                               |
+
+**Kết quả kiểm thử cuối phiên:** `pnpm check` exit 0 – **187 unit test** (shared 62, api 97, web 24, worker 4) ·
+`pnpm build` exit 0 · `pnpm test:integration` **46/46** (28 cũ + 18 mới) · `pnpm test:e2e` **43/43**.
+
+Thay đổi có chủ đích:
+
+- `/drafts/scripts` (Phase 02) được thay bằng `/scripts`; `scriptContentSchema` v1 → `ScriptDocument` v2.
+- Cài đặt › API Providers bỏ ô nhập API key (Phase 01 chỉ là ô trong bộ nhớ, không lưu) – key chỉ ở biến môi trường server.
+- E2E: viết lại 2 test (ô API key, kịch bản soạn tay) + 3 test mới.
+
+Ghi chú kỹ thuật GĐ 03:
+
+- Claude (API `2026-10-21`, SDK 1.x) không nhận `temperature` → "Độ sáng tạo" chỉ hiện khi provider hỗ trợ.
+- Proxy web: route AI dùng timeout 280 giây (dưới giới hạn chờ header 300 giây của fetch Node).
+- Công cụ ghi file chuyển `\uXXXX` thành ký tự thật → ESLint `no-irregular-whitespace`; sửa bằng escape text.
+
+### Giới hạn hiện tại
+
+- **Chưa xác minh với Anthropic/OpenAI thật** (chưa có key). Đơn giá Claude là bảng tham khảo trong code; OpenAI cần
+  cấu hình đơn giá qua env, nếu thiếu sẽ bị từ chối vì không ước tính được chi phí.
+- Tạo nhiều biến thể chạy đồng bộ trong 1 request (tối đa ~280 giây qua proxy). 10 biến thể với model lớn có thể quá thời
+  gian → nên dùng hàng đợi (Phase 07). Kết quả đã tạo vẫn được lưu dù trình duyệt hết thời gian chờ.
+- Rate limit / giữ chỗ ngân sách / semaphore nằm trong bộ nhớ 1 tiến trình API (đủ cho dev-local).
+- Model chưa xem ảnh sản phẩm (chỉ dùng văn bản + số ảnh); phát hiện bịa đặt bằng luật (giá, khuyến mãi, từ tuyệt đối),
+  không thay được kiểm duyệt của con người.
 
 ## Giai đoạn 04 – Ảnh AI (⬜)
 

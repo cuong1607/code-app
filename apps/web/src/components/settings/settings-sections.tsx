@@ -9,22 +9,37 @@ import {
   type AppSettingsUpdate,
   DEFAULT_DISPLAY_TIMEZONE,
   type HealthResponse,
+  type ProviderCheckResult,
+  type ScriptProviderId,
   VIDEO_DURATIONS,
   VIDEO_MODES,
   VIDEO_QUALITIES,
   healthResponseSchema,
 } from '@acs/shared';
-import { EmptyState, Field, UnavailableButton } from '@/components/common';
+import {
+  EmptyState,
+  ErrorState,
+  Field,
+  LoadingState,
+  StatusBadge,
+  UnavailableButton,
+} from '@/components/common';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, apiRequest, describeError } from '@/lib/api/client';
-import { VIDEO_TEMPLATES, VOICES } from '@/lib/data';
+import { useAsync } from '@/hooks/use-async';
+import { VIDEO_TEMPLATES, VOICES, scriptRepository } from '@/lib/data';
 import { formatDateTime } from '@/lib/format';
-import { ASPECT_RATIO_LABEL, VIDEO_MODE_META } from '@/lib/labels';
-import { SecretInput } from './secret-input';
+import {
+  AI_FEATURE_LABEL,
+  AI_USAGE_STATUS_META,
+  ASPECT_RATIO_LABEL,
+  PROVIDER_STATUS_META,
+  VIDEO_MODE_META,
+} from '@/lib/labels';
 
 export interface SectionProps {
   settings: AppSettings;
@@ -208,67 +223,213 @@ export function AccountSettings(_props: Partial<SectionProps>) {
   );
 }
 
-const PROVIDERS = [
-  { id: 'anthropic', name: 'Anthropic', use: 'Kịch bản (LLM)', env: 'ANTHROPIC_API_KEY' },
-  { id: 'openai', name: 'OpenAI', use: 'Kịch bản / ảnh', env: 'OPENAI_API_KEY' },
-  { id: 'google', name: 'Google AI', use: 'Ảnh / video', env: 'GOOGLE_API_KEY' },
-  { id: 'elevenlabs', name: 'ElevenLabs', use: 'Giọng đọc (TTS)', env: 'ELEVENLABS_API_KEY' },
+/** Provider chưa tích hợp (phase sau) – chỉ hiển thị biến môi trường dự kiến. */
+const FUTURE_PROVIDERS = [
+  { id: 'google', name: 'Google AI', use: 'Ảnh / video – Phase 04/07', env: 'GOOGLE_API_KEY' },
+  {
+    id: 'elevenlabs',
+    name: 'ElevenLabs',
+    use: 'Giọng đọc (TTS) – Phase 05',
+    env: 'ELEVENLABS_API_KEY',
+  },
 ];
 
+const code = (s: string) => (
+  <code key={s} className="bg-muted rounded px-1 font-mono text-xs">
+    {s}
+  </code>
+);
+
+/**
+ * Trạng thái THẬT của AI provider (từ API). API key chỉ cấu hình bằng biến môi trường server –
+ * giao diện không có ô nhập key và không bao giờ nhận lại giá trị key.
+ */
 export function ProviderSettings(_props: Partial<SectionProps>) {
+  const providers = useAsync(() => scriptRepository.providers(), []);
+  const [checks, setChecks] = useState<Record<string, ProviderCheckResult | 'loading'>>({});
+  const check = async (id: ScriptProviderId) => {
+    setChecks((c) => ({ ...c, [id]: 'loading' }));
+    try {
+      const r = await scriptRepository.checkProvider(id);
+      setChecks((c) => ({ ...c, [id]: r }));
+    } catch (error) {
+      setChecks((c) => ({
+        ...c,
+        [id]: {
+          id,
+          ok: false,
+          message: describeError(error),
+          model: null,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    }
+  };
   return (
-    <ul className="flex flex-col gap-3">
-      {PROVIDERS.map((p) => (
-        <li key={p.id} className="rounded-xl border p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <PlugZap className="text-muted-foreground size-4" aria-hidden />
-            <p className="font-medium">{p.name}</p>
-            <span className="text-muted-foreground text-xs">· {p.use}</span>
-            <Badge variant="neutral" className="ml-auto">
-              Chưa kiểm tra
-            </Badge>
-          </div>
-          <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto]">
-            <SecretInput label="API key" envName={p.env} />
-            <UnavailableButton
-              variant="outline"
-              reason="Kiểm tra kết nối cần endpoint server – dự kiến Phase 03"
-              className="sm:mb-5"
-            >
-              Kiểm tra kết nối
-            </UnavailableButton>
-          </div>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-3">
+      <p className="text-muted-foreground text-sm">
+        API key được đặt trong file {code('.env')} của server rồi khởi động lại API. Giao diện không
+        nhận, không lưu và không hiển thị API key.
+      </p>
+      {providers.error ? <ErrorState message={providers.error} onRetry={providers.reload} /> : null}
+      {!providers.data && !providers.error ? <LoadingState variant="block" /> : null}
+      <ul className="flex flex-col gap-3">
+        {(providers.data?.providers ?? []).map((p) => {
+          const r = checks[p.id];
+          return (
+            <li key={p.id} className="rounded-xl border p-4">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <PlugZap className="text-muted-foreground size-4" aria-hidden />
+                <p className="font-medium">{p.displayName}</p>
+                <span className="text-muted-foreground text-xs">· Kịch bản (Phase 03)</span>
+                {p.isMock ? <Badge variant="demo">KHÔNG PHẢI AI</Badge> : null}
+                <span className="ml-auto">
+                  <StatusBadge meta={PROVIDER_STATUS_META[p.status]} />
+                </span>
+              </div>
+              <p className="text-muted-foreground text-sm">{p.message}</p>
+              <p className="text-muted-foreground mt-1 flex flex-wrap gap-1 text-xs">
+                Biến môi trường: {p.envVars.map(code)}
+              </p>
+              {p.defaultModel ? (
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Model mặc định: {code(p.defaultModel)}
+                </p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={p.status !== 'ready' || r === 'loading'}
+                  onClick={() => void check(p.id)}
+                >
+                  {r === 'loading' ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}
+                </Button>
+                {r && r !== 'loading' ? (
+                  <span
+                    className={`flex items-center gap-1 text-sm ${r.ok ? 'text-success' : 'text-danger'}`}
+                    role="status"
+                  >
+                    {r.ok ? <CircleCheck className="size-4" /> : <CircleX className="size-4" />}{' '}
+                    {r.message}
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+        {FUTURE_PROVIDERS.map((p) => (
+          <li key={p.id} className="rounded-xl border border-dashed p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <PlugZap className="text-muted-foreground size-4" aria-hidden />
+              <p className="font-medium">{p.name}</p>
+              <span className="text-muted-foreground text-xs">· {p.use}</span>
+              <Badge variant="neutral" className="ml-auto">
+                Chưa tích hợp
+              </Badge>
+            </div>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Biến môi trường dự kiến: {code(p.env)}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
-export function ModelSettings(_props: Partial<SectionProps>) {
-  const rows = [
-    { id: 'script', label: 'Mô hình viết kịch bản', env: 'AI_SCRIPT_PROVIDER' },
-    { id: 'image', label: 'Mô hình tạo ảnh', env: 'AI_IMAGE_PROVIDER' },
-    { id: 'tts', label: 'Mô hình giọng đọc', env: 'AI_TTS_PROVIDER' },
-    { id: 'video', label: 'Mô hình AI video', env: 'AI_VIDEO_PROVIDER' },
-  ];
+/** Model & giới hạn của AI Script Engine (lưu DB, nhóm preferences.ai). */
+export function ModelSettings(props: SectionProps) {
+  const g = useGroup(props, 'ai');
+  const providers = useAsync(() => scriptRepository.providers(), []);
+  const templates = useAsync(() => scriptRepository.templates(), []);
+  const list = providers.data?.providers ?? [];
+  const current = list.find((p) => p.id === g.value.defaultProvider);
   return (
-    <div className={grid}>
-      {rows.map((r) => (
+    <div className="flex flex-col gap-4">
+      <div className={grid}>
         <Field
-          key={r.id}
-          label={r.label}
-          htmlFor={`st-model-${r.id}`}
-          hint={`Cấu hình ở server: ${r.env}`}
+          label="Provider viết kịch bản mặc định"
+          htmlFor="st-ai-provider"
+          hint="Để trống = provider đầu tiên đã cấu hình"
         >
           <NativeSelect
-            id={`st-model-${r.id}`}
-            value=""
-            disabled
-            placeholder="Chưa có provider (Phase 03–06)"
-            options={[]}
+            id="st-ai-provider"
+            value={g.value.defaultProvider ?? ''}
+            onChange={(e) => {
+              g.patch(
+                'defaultProvider',
+                (e.target.value || null) as AppPreferences['ai']['defaultProvider'],
+              );
+              g.patch('defaultModel', null);
+            }}
+            placeholder="Tự động"
+            options={list.map((p) => ({
+              value: p.id,
+              label: `${p.displayName}${p.status === 'ready' ? '' : ' (chưa cấu hình)'}`,
+            }))}
           />
         </Field>
-      ))}
+        <Field label="Model mặc định" htmlFor="st-ai-model">
+          <NativeSelect
+            id="st-ai-model"
+            value={g.value.defaultModel ?? ''}
+            disabled={!current}
+            onChange={(e) => g.patch('defaultModel', e.target.value || null)}
+            placeholder={
+              current
+                ? `Mặc định của provider (${current.defaultModel ?? '—'})`
+                : 'Chọn provider trước'
+            }
+            options={(current?.models ?? []).map((m) => ({ value: m.id, label: m.label }))}
+          />
+        </Field>
+        <Field label="Template kịch bản mặc định" htmlFor="st-ai-tpl">
+          <NativeSelect
+            id="st-ai-tpl"
+            value={g.value.defaultTemplateId}
+            onChange={(e) => g.patch('defaultTemplateId', e.target.value)}
+            options={(
+              templates.data ?? [{ id: g.value.defaultTemplateId, name: g.value.defaultTemplateId }]
+            ).map((t) => ({
+              value: t.id,
+              label: t.name,
+            }))}
+          />
+        </Field>
+        <NumberField
+          id="st-ai-maxvar"
+          label="Số phiên bản tối đa mỗi lần tạo"
+          value={g.value.maxVariants}
+          min={1}
+          max={10}
+          onChange={(v) => g.patch('maxVariants', v)}
+        />
+        <NumberField
+          id="st-ai-conc"
+          label="Số lời gọi AI đồng thời"
+          value={g.value.maxConcurrentRequests}
+          min={1}
+          max={5}
+          onChange={(v) => g.patch('maxConcurrentRequests', v)}
+          hint="Trong một lần tạo nhiều phiên bản"
+        />
+      </div>
+      <SwitchRow
+        label="Mặc định cho phép nhắc giá bán trong kịch bản"
+        hint="Giá vốn không bao giờ được gửi cho AI"
+        checked={g.value.includePriceByDefault}
+        onChange={(v) => g.patch('includePriceByDefault', v)}
+      />
+      <div className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs">
+        Mô hình tạo ảnh, giọng đọc và video sẽ được thêm ở Phase 04–07.
+      </div>
+      <SaveBar
+        dirty={g.dirty}
+        saving={g.saving}
+        updatedAt={props.settings.updatedAt}
+        onSave={() => void g.save()}
+      />
     </div>
   );
 }
@@ -515,44 +676,136 @@ export function BatchSettings(props: SectionProps) {
 }
 
 export function CostSettings(props: SectionProps) {
-  const g = useGroup(props, 'cost');
+  const cost = useGroup(props, 'cost');
+  const ai = useGroup(props, 'ai');
+  const usage = useAsync(() => scriptRepository.usageSummary(), [props.settings.updatedAt ?? '']);
+  const u = usage.data;
+  const money = (s: string) => `$${Number(s).toFixed(4)}`;
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-xl border border-dashed p-4">
-        <p className="text-sm font-medium">Chi phí tháng này</p>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Chưa có dữ liệu – chưa tích hợp provider AI nào.
+      <div className="rounded-xl border p-4">
+        <p className="text-sm font-medium">
+          Chi phí AI (ước tính theo đơn giá cấu hình – không phải hoá đơn)
         </p>
+        {usage.error ? (
+          <p className="text-danger mt-1 text-sm">{usage.error}</p>
+        ) : !u ? (
+          <p className="text-muted-foreground mt-1 text-sm">Đang tải…</p>
+        ) : (
+          <>
+            <dl className="mt-2 grid gap-3 sm:grid-cols-2">
+              <div>
+                <dt className="text-muted-foreground text-xs">Hôm nay (giờ VN)</dt>
+                <dd className="tabular font-semibold">
+                  {money(u.today.estimatedCostUsd)} / ${u.budgets.dailyUsd} · {u.today.calls} lời
+                  gọi
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-xs">Tháng này</dt>
+                <dd className="tabular font-semibold">
+                  {money(u.month.estimatedCostUsd)} / ${u.budgets.monthlyUsd} · {u.month.calls} lời
+                  gọi
+                </dd>
+              </div>
+            </dl>
+            {u.recent.length ? (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[520px] text-xs" aria-label="Lời gọi AI gần đây">
+                  <thead className="text-muted-foreground text-left">
+                    <tr>
+                      <th className="py-1 font-medium">Thời điểm</th>
+                      <th className="py-1 font-medium">Chức năng</th>
+                      <th className="py-1 font-medium">Provider / model</th>
+                      <th className="py-1 text-right font-medium">Token vào/ra</th>
+                      <th className="py-1 text-right font-medium">Ước tính</th>
+                      <th className="py-1 text-right font-medium">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {u.recent.map((r) => (
+                      <tr key={r.id} className="border-t">
+                        <td className="py-1">{formatDateTime(r.createdAt)}</td>
+                        <td className="py-1">{AI_FEATURE_LABEL[r.feature] ?? r.feature}</td>
+                        <td className="py-1">
+                          {r.provider}/{r.model}
+                        </td>
+                        <td className="tabular py-1 text-right">
+                          {r.inputTokens ?? '—'}/{r.outputTokens ?? '—'}
+                        </td>
+                        <td className="tabular py-1 text-right">
+                          {r.estimatedCostUsd ? money(r.estimatedCostUsd) : '—'}
+                        </td>
+                        <td className="py-1 text-right">
+                          <StatusBadge
+                            meta={
+                              AI_USAGE_STATUS_META[r.status] ?? { label: r.status, tone: 'neutral' }
+                            }
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-muted-foreground mt-2 text-sm">Chưa có lời gọi AI nào.</p>
+            )}
+          </>
+        )}
       </div>
       <div className={grid}>
         <NumberField
+          id="st-ai-pergen"
+          label="Ngân sách mỗi lần tạo (USD)"
+          value={ai.value.perGenerationBudgetUsd}
+          min={0}
+          max={1000}
+          step={0.1}
+          onChange={(v) => ai.patch('perGenerationBudgetUsd', v)}
+          hint="Lần tạo có chi phí ước tính lớn hơn sẽ bị từ chối"
+        />
+        <NumberField
+          id="st-ai-daily"
+          label="Ngân sách AI mỗi ngày (USD)"
+          value={ai.value.dailyBudgetUsd}
+          min={0}
+          max={10_000}
+          step={0.5}
+          onChange={(v) => ai.patch('dailyBudgetUsd', v)}
+        />
+        <NumberField
           id="st-budget"
           label="Ngân sách tháng (USD)"
-          value={g.value.monthlyBudgetUsd}
+          value={cost.value.monthlyBudgetUsd}
           min={0}
           max={1_000_000}
-          onChange={(v) => g.patch('monthlyBudgetUsd', v)}
+          onChange={(v) => cost.patch('monthlyBudgetUsd', v)}
         />
         <NumberField
           id="st-alert"
           label="Cảnh báo khi đạt (%)"
-          value={g.value.alertPercent}
+          value={cost.value.alertPercent}
           min={1}
           max={100}
-          onChange={(v) => g.patch('alertPercent', v)}
+          onChange={(v) => cost.patch('alertPercent', v)}
         />
       </div>
       <SwitchRow
-        label="Dừng tạo nội dung khi vượt ngân sách"
-        hint="Ngăn phát sinh chi phí ngoài kế hoạch"
-        checked={g.value.hardStop}
-        onChange={(v) => g.patch('hardStop', v)}
+        label="Dừng tạo nội dung khi vượt ngân sách tháng"
+        hint="Ngăn phát sinh chi phí ngoài kế hoạch (ngân sách ngày và mỗi lần tạo luôn được áp dụng)"
+        checked={cost.value.hardStop}
+        onChange={(v) => cost.patch('hardStop', v)}
       />
       <SaveBar
-        dirty={g.dirty}
-        saving={g.saving}
+        dirty={cost.dirty || ai.dirty}
+        saving={cost.saving || ai.saving}
         updatedAt={props.settings.updatedAt}
-        onSave={() => void g.save()}
+        onSave={() =>
+          void props
+            .onSave({ preferences: { cost: cost.value, ai: ai.value } })
+            .catch(() => undefined)
+        }
       />
     </div>
   );

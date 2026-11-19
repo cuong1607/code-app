@@ -54,6 +54,18 @@ Dự án: **AI CONTENT STUDIO**, một monorepo pnpm gồm Next.js (web), NestJS
 - Luật React Compiler đang bật: không đọc ref / gọi hàm không thuần (`Date.now()`) trong render, không `setState` đồng bộ trong effect.
 - Sau khi sửa UI: `pnpm check`, `pnpm build`, `pnpm test:e2e` (cần `pnpm --filter @acs/web test:e2e:install` lần đầu).
 
+### AI (`apps/api/src/ai`, `apps/api/src/scripts`) – từ Phase 03
+
+- Gọi AI CHỈ qua `ScriptProviderRegistry` → adapter kế thừa `BaseScriptProvider` (chỉ cần triển khai `complete()` +
+  `validateConfiguration()`); không gọi SDK ở nơi khác. SDK đặt `maxRetries: 0` – retry/sửa lỗi do lớp cơ sở kiểm soát.
+- Prompt: không đưa dữ liệu vào `SYSTEM_RULES`; dữ liệu sản phẩm/người dùng luôn qua `encodeUntrusted()` trong thẻ riêng.
+  Chỉ lấy trường sản phẩm qua `toProductFacts()` (whitelist, không giá vốn). Đổi nội dung template → tăng `version`.
+- Không tin output AI: `aiScriptOutputSchema` (strict) → `scriptDocumentSchema` → `lintScriptDocument`. `narration` do server ghép.
+- Mọi lời gọi AI: ước tính + `AiUsageService.reserve()` trước, ghi `ai_usage` mỗi lần gọi (kể cả lỗi), giải phóng trong `finally`.
+- Thao tác AI trên kịch bản đã lưu tạo PHIÊN BẢN MỚI (`ScriptsService.createVersion`), không ghi đè.
+- Test không gọi AI thật: dùng `MockScriptProvider` (hoặc client giả). AI thật: `pnpm ai:smoke` (tốn tiền, cần key).
+- Công cụ ghi file có thể biến `\uXXXX` thành ký tự thật → kiểm tra lại regex chứa ký tự vô hình.
+
 ### Xử lý lỗi
 
 - API: `AllExceptionsFilter` (toàn cục) + `RequestIdMiddleware`. Lỗi 5xx không xác định thì không lộ chi tiết ra client.

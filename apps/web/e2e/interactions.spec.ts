@@ -40,15 +40,15 @@ test.describe('điều hướng', () => {
 });
 
 test.describe('cài đặt', () => {
-  test('API key là ô mật khẩu rỗng, không tự điền, không lưu', async ({ page }) => {
+  // Phase 03: API key CHỈ cấu hình bằng biến môi trường server – giao diện không có ô nhập key
+  test('API key không nhập ở giao diện; trạng thái provider lấy từ server', async ({ page }) => {
     await page.goto('/settings?tab=providers');
-    const keys = page.getByLabel('API key');
-    await expect(keys).toHaveCount(4);
-    for (const key of await keys.all()) {
-      await expect(key).toHaveAttribute('type', 'password');
-      await expect(key).toHaveValue('');
-      await expect(key).toHaveAttribute('autocomplete', 'off');
-    }
+    await expect(page.getByText('Anthropic Claude')).toBeVisible();
+    await expect(page.getByLabel('API key')).toHaveCount(0);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByText('ANTHROPIC_API_KEY').first()).toBeVisible();
+    const body = await page.content();
+    expect(body).not.toMatch(/sk-ant-|sk-proj-/);
   });
 
   test('lưu ngân sách vào database, tải lại vẫn còn', async ({ page }) => {

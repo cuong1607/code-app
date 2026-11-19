@@ -1,9 +1,11 @@
 'use client';
 
-import { Check, Download, RotateCw, X } from 'lucide-react';
-import type { VideoJobStatus } from '@acs/shared';
+import { Check, Download, RotateCw } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
+import type { VideoDraft } from '@acs/shared';
 import {
-  DemoBadge,
+  Field,
   MediaPreview,
   StatusBadge,
   UnavailableButton,
@@ -19,197 +21,191 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Progress } from '@/components/ui/misc';
-import { templateName, voiceName } from '@/lib/data';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { describeError } from '@/lib/api/client';
+import { templateName, videoDraftRepository, voiceName } from '@/lib/data';
 import { formatDateTime } from '@/lib/format';
 import { VIDEO_MODE_META, VIDEO_STATUS_META } from '@/lib/labels';
-import type { VideoJob } from '@/types/domain';
-import { cn } from '@/lib/utils';
+import { hueFromString } from '@/types/domain';
 
-const PIPELINE: VideoJobStatus[] = [
-  'queued',
-  'scripting',
-  'voicing',
-  'imaging',
-  'rendering',
-  'completed',
-];
+const PIPELINE = ['queued', 'scripting', 'voicing', 'imaging', 'rendering', 'completed'] as const;
 
-function Pipeline({ job }: { job: VideoJob }) {
-  const failed = job.status === 'failed' || job.status === 'cancelled';
-  // Với tác vụ lỗi: ước lượng bước đã dừng theo % tiến độ
-  const reached = failed
-    ? Math.min(PIPELINE.length - 2, Math.floor((job.progress / 100) * (PIPELINE.length - 1)))
-    : PIPELINE.indexOf(job.status);
-
-  return (
-    <ol className="flex flex-col gap-0">
-      {PIPELINE.map((step, i) => {
-        const done = i < reached || (!failed && job.status === 'completed');
-        const current = i === reached && !(job.status === 'completed');
-        const broken = failed && i === reached;
-        return (
-          <li key={step} className="relative flex gap-3 pb-3 last:pb-0">
-            {i < PIPELINE.length - 1 ? (
-              <span
-                className={cn(
-                  'absolute top-6 bottom-0 left-[11px] w-px',
-                  done ? 'bg-success' : 'bg-border',
-                )}
-                aria-hidden
-              />
-            ) : null}
-            <span
-              className={cn(
-                'relative grid size-6 shrink-0 place-items-center rounded-full border text-[11px] font-bold',
-                done && 'bg-success border-success text-white',
-                current && !broken && 'border-primary bg-primary/15 text-[oklch(0.45_0.1_60)]',
-                broken && 'bg-danger border-danger text-white',
-              )}
-            >
-              {done ? <Check className="size-3.5" /> : broken ? <X className="size-3.5" /> : i + 1}
-            </span>
-            <span
-              className={cn(
-                'pt-0.5 text-sm',
-                current || broken ? 'font-medium' : 'text-muted-foreground',
-              )}
-            >
-              {VIDEO_STATUS_META[step].label}
-              {broken ? <span className="text-danger"> – dừng tại bước này</span> : null}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
+/** Chi tiết luồng nháp: xem cấu hình, preview (chưa có video), sửa tên & prompt (lưu DB). */
 export function JobDetailDialog({
   job,
   onOpenChange,
+  onSaved,
 }: {
-  job: VideoJob | undefined;
+  job: VideoDraft | undefined;
   onOpenChange: (open: boolean) => void;
+  onSaved: (draft: VideoDraft) => void;
 }) {
   return (
     <Dialog open={Boolean(job)} onOpenChange={onOpenChange}>
       <DialogContent size="xl">
         {job ? (
-          <>
-            <DialogHeader>
-              <div className="flex flex-wrap items-center gap-2">
-                <DialogTitle className="text-base sm:text-lg">{job.name}</DialogTitle>
-                {job.isLocalDraft ? (
-                  <DemoBadge label="NHÁP CỤC BỘ" />
-                ) : job.isDemo ? (
-                  <DemoBadge />
-                ) : null}
-              </div>
-              <DialogDescription>
-                Tạo lúc {formatDateTime(job.createdAt)} · cập nhật {formatDateTime(job.updatedAt)}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogBody>
-              <div className="grid gap-6 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
-                <div className="mx-auto flex w-full max-w-60 flex-col gap-3">
-                  <VideoPreview
-                    src={job.resultUrl}
-                    poster={job.thumbnail ?? job.images[0]}
-                    aspect={job.aspectRatio}
-                    emptyMessage={
-                      job.isLocalDraft
-                        ? 'Luồng nháp – chưa được gửi đi render'
-                        : job.status === 'completed'
-                          ? 'Dữ liệu DEMO – không có file video thật'
-                          : 'Video chưa được tạo'
-                    }
-                  />
-                  <div className="flex items-center gap-2">
-                    <Progress
-                      value={job.progress}
-                      tone={
-                        job.status === 'failed'
-                          ? 'danger'
-                          : job.status === 'completed'
-                            ? 'success'
-                            : 'primary'
-                      }
-                    />
-                    <span className="tabular text-xs font-medium">{job.progress}%</span>
-                  </div>
-                </div>
-                <div className="flex min-w-0 flex-col gap-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge meta={VIDEO_STATUS_META[job.status]} />
-                    {job.errorMessage ? (
-                      <span className="text-danger text-sm">{job.errorMessage}</span>
-                    ) : null}
-                  </div>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
-                    {[
-                      ['Sản phẩm', job.productName],
-                      ['Tỷ lệ', job.aspectRatio],
-                      ['Thời lượng', `${job.durationSec} giây`],
-                      ['Chất lượng', job.quality],
-                      ['Giọng đọc', voiceName(job.voiceId)],
-                      ['Template', templateName(job.templateId)],
-                      ['Chế độ', VIDEO_MODE_META[job.mode].label],
-                      ['Batch', job.batchId],
-                    ].map(([k, v]) => (
-                      <div key={k} className="min-w-0">
-                        <dt className="text-muted-foreground text-xs">{k}</dt>
-                        <dd className="truncate font-medium" title={v}>
-                          {v}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <div>
-                    <p className="mb-1 text-xs font-medium">Prompt</p>
-                    <p className="bg-muted/60 rounded-lg p-3 text-[13px] leading-relaxed">
-                      {job.prompt}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="mb-1.5 text-xs font-medium">
-                      Ảnh tham chiếu ({job.images.length})
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {job.images.map((img) => (
-                        <MediaPreview key={img.id} image={img} className="size-14 border" />
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <p className="mb-2 text-xs font-medium">Các bước xử lý</p>
-                    <Pipeline job={job} />
-                  </div>
-                </div>
-              </div>
-            </DialogBody>
-            <DialogFooter>
-              <UnavailableButton
-                variant="outline"
-                reason="Chạy lại cần backend hàng đợi – dự kiến Phase 07"
-              >
-                <RotateCw /> Chạy lại
-              </UnavailableButton>
-              <UnavailableButton
-                variant="outline"
-                reason={
-                  job.resultUrl
-                    ? 'Tải xuống cần presigned URL – Phase 02'
-                    : 'Chưa có file video để tải'
-                }
-              >
-                <Download /> Tải video
-              </UnavailableButton>
-              <Button onClick={() => onOpenChange(false)}>Đóng</Button>
-            </DialogFooter>
-          </>
+          <Body key={job.id} job={job} onClose={() => onOpenChange(false)} onSaved={onSaved} />
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Body({
+  job,
+  onClose,
+  onSaved,
+}: {
+  job: VideoDraft;
+  onClose: () => void;
+  onSaved: (d: VideoDraft) => void;
+}) {
+  const [name, setName] = useState(job.name);
+  const [prompt, setPrompt] = useState(job.prompt);
+  const [saving, setSaving] = useState(false);
+  const dirty = name !== job.name || prompt !== job.prompt;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const saved = await videoDraftRepository.update(job.id, { name, prompt });
+      onSaved(saved);
+      toast.success('Đã lưu thay đổi luồng nháp');
+    } catch (error) {
+      toast.error('Không lưu được', { description: describeError(error) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="text-base sm:text-lg">{job.name}</DialogTitle>
+        <DialogDescription>
+          Batch {job.batchKey} · tạo lúc {formatDateTime(job.createdAt)} · cập nhật{' '}
+          {formatDateTime(job.updatedAt)}
+        </DialogDescription>
+      </DialogHeader>
+      <DialogBody>
+        <div className="grid gap-6 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+          <div className="mx-auto flex w-full max-w-60 flex-col gap-3">
+            <VideoPreview
+              poster={
+                job.images[0]
+                  ? {
+                      id: job.images[0].id,
+                      url: job.images[0].previewUrl ?? undefined,
+                      hue: hueFromString(job.id),
+                    }
+                  : undefined
+              }
+              aspect={job.config.aspectRatio}
+              emptyMessage="Luồng nháp – chưa render (Phase 06/07)"
+            />
+            <StatusBadge meta={VIDEO_STATUS_META.queued} className="self-center" />
+          </div>
+          <div className="flex min-w-0 flex-col gap-5">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+              {[
+                ['Sản phẩm', job.productName],
+                ['Tỷ lệ', job.config.aspectRatio],
+                ['Thời lượng', `${job.config.durationSec} giây`],
+                ['Chất lượng', job.config.quality],
+                ['Giọng đọc', voiceName(job.config.voiceId)],
+                ['Template', templateName(job.config.templateId)],
+                ['Chế độ', VIDEO_MODE_META[job.config.mode].label],
+              ].map(([k, v]) => (
+                <div key={k} className="min-w-0">
+                  <dt className="text-muted-foreground text-xs">{k}</dt>
+                  <dd className="truncate font-medium" title={v}>
+                    {v}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <Field label="Tên luồng" htmlFor="jd-name">
+              <Input
+                id="jd-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={200}
+              />
+            </Field>
+            <Field label="Prompt" htmlFor="jd-prompt">
+              <Textarea
+                id="jd-prompt"
+                rows={4}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                maxLength={4000}
+              />
+            </Field>
+            <div>
+              <p className="mb-1.5 text-xs font-medium">Ảnh tham chiếu ({job.images.length})</p>
+              {job.images.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {job.images.map((img) => (
+                    <MediaPreview
+                      key={img.id}
+                      image={{
+                        id: img.id,
+                        url: img.previewUrl ?? undefined,
+                        hue: hueFromString(img.id),
+                        label: img.filename,
+                      }}
+                      className="size-14 border"
+                      alt={img.filename}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  Không có ảnh (hoặc ảnh đã bị xoá khỏi thư viện).
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium">
+                Các bước xử lý (sẽ chạy khi có worker render)
+              </p>
+              <ol className="flex flex-wrap gap-1.5">
+                {PIPELINE.map((s, i) => (
+                  <li
+                    key={s}
+                    className={
+                      i === 0
+                        ? 'bg-primary/15 rounded px-2 py-0.5 text-xs font-medium'
+                        : 'bg-muted text-muted-foreground rounded px-2 py-0.5 text-xs'
+                    }
+                  >
+                    {i + 1}. {VIDEO_STATUS_META[s].label}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </div>
+      </DialogBody>
+      <DialogFooter>
+        <UnavailableButton
+          variant="outline"
+          reason="Chạy luồng cần worker render – dự kiến Phase 07"
+        >
+          <RotateCw /> Chạy
+        </UnavailableButton>
+        <UnavailableButton variant="outline" reason="Chưa có file video – render ở Phase 06">
+          <Download /> Tải video
+        </UnavailableButton>
+        {dirty ? (
+          <Button onClick={() => void save()} disabled={saving || !name.trim() || !prompt.trim()}>
+            <Check /> {saving ? 'Đang lưu…' : 'Lưu thay đổi'}
+          </Button>
+        ) : (
+          <Button onClick={onClose}>Đóng</Button>
+        )}
+      </DialogFooter>
+    </>
   );
 }

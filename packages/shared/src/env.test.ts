@@ -36,6 +36,19 @@ describe('env', () => {
     }
   });
 
+  it('từ chối khởi động production với AUTH_MODE=dev-local', () => {
+    expect(() => parseEnv(apiEnvSchema, { ...validApiEnv, NODE_ENV: 'production' }, 'api')).toThrow(
+      /AUTH_MODE=dev-local KHÔNG được phép/,
+    );
+  });
+
+  it('mặc định chỉ nghe loopback, dev workspace cố định, tắt tải ảnh từ URL', () => {
+    const env = parseEnv(apiEnvSchema, validApiEnv, 'api');
+    expect(env.API_HOST).toBe('127.0.0.1');
+    expect(env.AUTH_MODE).toBe('dev-local');
+    expect(env.IMPORT_IMAGE_ALLOWED_HOSTS).toEqual([]);
+  });
+
   it('worker env có mặc định hợp lý', () => {
     const env = parseEnv(workerEnvSchema, {}, 'worker');
     expect(env.WORKER_CONCURRENCY).toBe(2);

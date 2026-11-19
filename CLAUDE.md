@@ -38,9 +38,18 @@ Dự án: **AI CONTENT STUDIO**, một monorepo pnpm gồm Next.js (web), NestJS
 ### Frontend (`apps/web`) – từ Phase 01
 
 - Đọc [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) trước khi làm UI. Dùng token màu/tone có sẵn, không hardcode màu trạng thái.
-- Component **không** import `src/mocks` trực tiếp; luôn đi qua repository trong `src/lib/data`. Phase 02+ chỉ thay thân repository bằng `apiRequest`.
-- Dữ liệu demo đặt tập trung trong `src/mocks`, có `isDemo: true`, sinh tất định (không `Math.random`/`Date.now` lúc import).
-- Chức năng chưa có backend: `UnavailableButton` (kèm lý do + phase) hoặc nháp cục bộ `isLocalDraft` có `DemoBadge`. Không giả vờ thành công.
+- Component chỉ lấy dữ liệu qua repository trong `src/lib/data` (gọi API thật qua proxy `/api/backend`). Không thêm dữ liệu demo trộn với dữ liệu thật; cấu hình tĩnh để ở `src/lib/catalog.ts`.
+- Chức năng chưa có backend: `UnavailableButton` (kèm lý do + phase). Dữ liệu mẫu (seed) phải có nhãn ("MẪU"). Không giả vờ thành công.
+
+### Backend (`apps/api`) – từ Phase 02
+
+- Mọi endpoint (trừ `@Public()`) nhận workspace qua `@WorkspaceId()`; mọi truy vấn PHẢI lọc `workspaceId` và kiểm tra tài nguyên tham chiếu thuộc cùng workspace. Không bao giờ đọc workspaceId từ client.
+- Validate bằng `parseInput(schemaDùngChung, body)`; id trong path dùng `parseId()`.
+- Tiền là `Decimal(14,2)`, trả về dạng chuỗi. Thời gian `Timestamptz(3)` UTC.
+- File: chỉ tin nội dung server tự kiểm tra (magic bytes, dung lượng thật), không tin MIME/size client gửi.
+- Không tải URL bên ngoài ngoài `RemoteImageFetcher` (allowlist + chặn IP nội bộ).
+- Đổi schema: `pnpm db:migrate` (dừng `pnpm dev` trước trên Windows vì Prisma engine bị khoá), commit cả migration.
+- Kiểm thử: `pnpm test:integration` (DB + MinIO thật) và `pnpm test:e2e` (cần API đang chạy).
 - Nhãn & tone trạng thái lấy từ `src/lib/labels.ts`; enum lấy từ `@acs/shared`.
 - Luật React Compiler đang bật: không đọc ref / gọi hàm không thuần (`Date.now()`) trong render, không `setState` đồng bộ trong effect.
 - Sau khi sửa UI: `pnpm check`, `pnpm build`, `pnpm test:e2e` (cần `pnpm --filter @acs/web test:e2e:install` lần đầu).

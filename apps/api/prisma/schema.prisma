@@ -1,16 +1,22 @@
 // Prisma schema - AI CONTENT STUDIO
-// QUY TẮC: mọi cột thời gian dùng @db.Timestamptz(3) và được lưu ở UTC.
+// QUY TẮC:
+//  - Mọi cột thời gian dùng @db.Timestamptz(3) và được lưu ở UTC.
+//  - Mọi bảng nghiệp vụ có workspace_id (cô lập dữ liệu theo workspace).
+//  - Tiền dùng Decimal(14,2) – KHÔNG dùng Float.
+//  - Không lưu API key / secret trong database.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
 }
 
-/// Cấu hình hệ thống dạng key/value (hạ tầng của giai đoạn 00, chưa có UI quản lý).
+/// Cấu hình hệ thống dạng key/value (Phase 00).
 model SystemSetting {
   key       String   @id @db.VarChar(120)
   value     Json
@@ -18,4 +24,287 @@ model SystemSetting {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("system_settings")
+}
+
+// ============================================================ Workspace
+model Workspace {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(120)
+  slug      String   @unique @db.VarChar(60)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  settings         ApplicationSettings?
+  products         Product[]
+  mediaAssets      MediaAsset[]
+  mediaUploads     MediaUpload[]
+  videoDrafts      VideoDraft[]
+  publishingDrafts PublishingDraft[]
+  scriptDrafts     ScriptDraft[]
+  promptPresets    PromptPreset[]
+
+  @@map("workspaces")
+}
+
+/// Cài đặt KHÔNG nhạy cảm của workspace (API key chỉ nằm ở biến môi trường server).
+model ApplicationSettings {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @unique @map("workspace_id") @db.Uuid
+  locale           String   @default("vi-VN") @db.VarChar(10)
+  timezone         String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
+  defaultVideoMode String   @default("image_slideshow") @map("default_video_mode") @db.VarChar(40)
+  /// Đã validate bằng appPreferencesSchema (strict) ở API
+  preferences      Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("application_settings")
+}
+
+// ============================================================ Sản phẩm
+enum ProductStatus {
+  draft
+  active
+  archived
+
+  @@map("product_status")
+}
+
+enum ProductSourceType {
+  manual
+  import_csv
+  import_xlsx
+  seed
+
+  @@map("product_source_type")
+}
+
+model Product {
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @map("workspace_id") @db.Uuid
+  /// Luôn lưu IN HOA -> SKU duy nhất không phân biệt hoa/thường trong 1 workspace
+  sku              String            @db.VarChar(40)
+  name             String            @db.VarChar(200)
+  category         String            @db.VarChar(100)
+  brand            String?           @db.VarChar(100)
+  description      String?
+  costPrice        Decimal?          @map("cost_price") @db.Decimal(14, 2)
+  sellingPrice     Decimal           @map("selling_price") @db.Decimal(14, 2)
+  currency         String            @default("VND") @db.VarChar(3)
+  attributes       Json              @default("{}")
+  sourceUrl        String?           @map("source_url") @db.VarChar(2048)
+  sourceType       ProductSourceType @default(manual) @map("source_type")
+  /// URL ảnh ghi nhận khi import nhưng CHƯA tải về (tải thủ công, có kiểm soát SSRF)
+  pendingImageUrls String[]          @default([]) @map("pending_image_urls")
+  status           ProductStatus     @default(draft)
+  /// Tên + SKU + danh mục + thương hiệu đã bỏ dấu, chữ thường (tìm kiếm tiếng Việt)
+  searchText       String            @default("") @map("search_text")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  media        ProductMedia[]
+  videoDrafts  VideoDraft[]
+  scriptDrafts ScriptDraft[]
+
+  @@unique([workspaceId, sku])
+  @@index([workspaceId, status])
+  @@index([workspaceId, category])
+  @@index([workspaceId, createdAt])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_search_text_trgm_idx")
+  @@map("products")
+}
+
+// ============================================================ Tài nguyên media
+enum MediaAssetType {
+  ORIGINAL_IMAGE
+  AI_IMAGE
+  VIDEO
+  AUDIO
+  THUMBNAIL
+
+  @@map("media_asset_type")
+}
+
+enum MediaSourceType {
+  upload
+  import_url
+  generated
+  seed
+
+  @@map("media_source_type")
+}
+
+model MediaAsset {
+  id               String          @id @default(uuid()) @db.Uuid
+  workspaceId      String          @map("workspace_id") @db.Uuid
+  /// Tên file đã làm sạch (dùng khi tải xuống)
+  filename         String          @db.VarChar(255)
+  originalFilename String          @map("original_filename") @db.VarChar(255)
+  storageKey       String          @map("storage_key") @db.VarChar(512)
+  bucket           String          @db.VarChar(63)
+  /// MIME do SERVER xác định từ nội dung file (không tin client)
+  mimeType         String          @map("mime_type") @db.VarChar(100)
+  fileSize         BigInt          @map("file_size")
+  width            Int?
+  height           Int?
+  sha256           String          @db.Char(64)
+  assetType        MediaAssetType  @map("asset_type")
+  sourceType       MediaSourceType @default(upload) @map("source_type")
+  sourceUrl        String?         @map("source_url") @db.VarChar(2048)
+  metadata         Json            @default("{}")
+  searchText       String          @default("") @map("search_text")
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  products  ProductMedia[]
+
+  @@unique([bucket, storageKey])
+  /// Phát hiện file trùng theo nội dung trong cùng workspace
+  @@unique([workspaceId, sha256])
+  @@index([workspaceId, assetType, createdAt])
+  @@map("media_assets")
+}
+
+/// Liên kết N-N sản phẩm <-> tài nguyên. Một ảnh có thể dùng cho nhiều sản phẩm.
+/// "Mỗi sản phẩm tối đa 1 ảnh đại diện" được đảm bảo bằng transaction ở ProductMediaService.
+model ProductMedia {
+  productId    String   @map("product_id") @db.Uuid
+  mediaAssetId String   @map("media_asset_id") @db.Uuid
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@id([productId, mediaAssetId])
+  @@index([mediaAssetId])
+  @@index([productId, sortOrder])
+  @@map("product_media")
+}
+
+enum MediaUploadStatus {
+  pending
+  completed
+  failed
+  expired
+
+  @@map("media_upload_status")
+}
+
+/// Phiên upload presigned. Chỉ sau khi server xác minh object mới tạo MediaAsset.
+model MediaUpload {
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @map("workspace_id") @db.Uuid
+  bucket           String            @db.VarChar(63)
+  storageKey       String            @unique @map("storage_key") @db.VarChar(512)
+  originalFilename String            @map("original_filename") @db.VarChar(255)
+  declaredMimeType String            @map("declared_mime_type") @db.VarChar(100)
+  declaredSize     Int               @map("declared_size")
+  status           MediaUploadStatus @default(pending)
+  failureReason    String?           @map("failure_reason") @db.VarChar(500)
+  mediaAssetId     String?           @map("media_asset_id") @db.Uuid
+  expiresAt        DateTime          @map("expires_at") @db.Timestamptz(3)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+  @@index([workspaceId, createdAt])
+  @@map("media_uploads")
+}
+
+// ============================================================ Bản nháp
+/// Luồng sản xuất nháp của Video Factory (chưa render – render ở Phase 06/07).
+model VideoDraft {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  name          String   @db.VarChar(200)
+  batchKey      String   @map("batch_key") @db.VarChar(80)
+  productId     String?  @map("product_id") @db.Uuid
+  /// Ảnh chụp tên sản phẩm tại thời điểm tạo (giữ lại nếu sản phẩm bị xoá)
+  productName   String   @map("product_name") @db.VarChar(200)
+  prompt        String
+  config        Json
+  mediaAssetIds String[] @default([]) @map("media_asset_ids") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product          Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  publishingDrafts PublishingDraft[]
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, batchKey])
+  @@map("video_drafts")
+}
+
+enum PublishMode {
+  immediate
+  scheduled
+  draft
+
+  @@map("publish_mode")
+}
+
+/// Bài đăng TikTok nháp – trạng thái "chờ kiểm duyệt", KHÔNG được gửi tới TikTok (Phase 08).
+model PublishingDraft {
+  id           String      @id @default(uuid()) @db.Uuid
+  workspaceId  String      @map("workspace_id") @db.Uuid
+  videoDraftId String?     @map("video_draft_id") @db.Uuid
+  videoName    String      @map("video_name") @db.VarChar(200)
+  accountRef   String?     @map("account_ref") @db.VarChar(100)
+  caption      String
+  hashtags     String[]    @default([])
+  mode         PublishMode
+  scheduledAt  DateTime    @map("scheduled_at") @db.Timestamptz(3)
+  attachCart   Boolean     @default(false) @map("attach_cart")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  videoDraft VideoDraft? @relation(fields: [videoDraftId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, scheduledAt])
+  @@map("publishing_drafts")
+}
+
+/// Kịch bản nháp (soạn/sửa thủ công; AI ở Phase 03).
+model ScriptDraft {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  productId   String?  @map("product_id") @db.Uuid
+  title       String   @db.VarChar(300)
+  content     Json
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, updatedAt])
+  @@map("script_drafts")
+}
+
+/// Prompt người dùng lưu lại để dùng lại.
+model PromptPreset {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  scope       String   @db.VarChar(20)
+  name        String   @db.VarChar(100)
+  content     String
+  category    String?  @db.VarChar(50)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, scope, name])
+  @@map("prompt_presets")
 }

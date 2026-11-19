@@ -15,6 +15,7 @@ describe('validateSchedule', () => {
     startLocal: '2026-11-20T08:00',
     videoCount: 2,
     accountId: 'acc-1',
+    requireAccount: true,
     caption: 'ok',
     hashtags: ['#a'],
     nowMs: Date.parse('2026-11-19T00:00:00Z'),
@@ -37,6 +38,10 @@ describe('validateSchedule', () => {
       caption: 'x'.repeat(2201),
     });
     expect(r.errors).toHaveLength(3);
+  });
+
+  it('chưa có tài khoản kết nối (Phase 08) -> không bắt buộc chọn tài khoản', () => {
+    expect(validateSchedule({ ...base, accountId: null, requireAccount: false }).ok).toBe(true);
   });
 
   it('chế độ đăng ngay không cần thời gian', () => {

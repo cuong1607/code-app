@@ -2,22 +2,27 @@
 
 Hệ thống web tự động lấy thông tin & ảnh sản phẩm, dùng AI viết kịch bản, tạo ảnh, tạo giọng đọc tiếng Việt, dựng video hàng loạt và quản lý lịch đăng TikTok.
 
-> **Trạng thái hiện tại: Giai đoạn 01 – Giao diện Web Dashboard đã xong.** Toàn bộ UI dùng **dữ liệu DEMO** có gắn nhãn;
-> chưa có AI, render video, đăng TikTok hay lưu dữ liệu nghiệp vụ thật. Xem [docs/ROADMAP.md](docs/ROADMAP.md) và
+> **Trạng thái hiện tại: Giai đoạn 02 – Database, sản phẩm & thư viện media đã xong.** Sản phẩm, ảnh (MinIO), import
+> Excel/CSV, bản nháp và cài đặt lưu thật trong PostgreSQL. Chưa có AI, render video, đăng TikTok và **chưa có đăng nhập**
+> (chỉ dùng trên máy cục bộ). Xem [docs/ROADMAP.md](docs/ROADMAP.md), [docs/API.md](docs/API.md),
 > [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
 
-### Các trang (http://localhost:3000)
+> ⚠️ **Bảo mật:** API chạy chế độ `AUTH_MODE=dev-local` – KHÔNG có xác thực. Web và API chỉ nghe trên `127.0.0.1`;
+> API từ chối kết nối không đến từ máy cục bộ và từ chối khởi động khi `NODE_ENV=production`. Không mở cổng 3000/4000 ra Internet.
 
-| Đường dẫn         | Trang                                               |
-| ----------------- | --------------------------------------------------- |
-| `/dashboard`      | Tổng quan (số liệu DEMO + trạng thái hệ thống thật) |
-| `/products`       | Quản lý sản phẩm                                    |
-| `/studio/scripts` | Kịch bản AI                                         |
-| `/studio/images`  | Xưởng ảnh AI                                        |
-| `/studio/videos`  | Xưởng video (Video Factory)                         |
-| `/library`        | Thư viện tài nguyên                                 |
-| `/publishing`     | Lịch đăng TikTok                                    |
-| `/settings`       | Cài đặt                                             |
+### Các trang (http://127.0.0.1:3000)
+
+| Đường dẫn         | Trang                                   |
+| ----------------- | --------------------------------------- |
+| `/dashboard`      | Tổng quan (số liệu thật từ database)    |
+| `/products`       | Quản lý sản phẩm, import/xuất Excel/CSV |
+| `/products/[id]`  | Chi tiết sản phẩm & quản lý ảnh         |
+| `/studio/scripts` | Kịch bản AI                             |
+| `/studio/images`  | Xưởng ảnh AI                            |
+| `/studio/videos`  | Xưởng video (Video Factory)             |
+| `/library`        | Thư viện tài nguyên                     |
+| `/publishing`     | Lịch đăng TikTok                        |
+| `/settings`       | Cài đặt                                 |
 
 | Thành phần        | Công nghệ                                                         | Cổng local  |
 | ----------------- | ----------------------------------------------------------------- | ----------- |
@@ -61,8 +66,9 @@ Copy-Item .env.example .env
 pnpm infra:up
 pnpm infra:ps            # chờ tới khi cả 3 dịch vụ ở trạng thái "healthy"
 
-# 4. Tạo bảng trong database
-pnpm db:migrate
+# 4. Tạo bảng trong database + dữ liệu MẪU (12 sản phẩm, có nhãn "MẪU")
+pnpm db:deploy
+pnpm db:seed
 
 # 5. Chạy web + api + worker cùng lúc
 pnpm dev
@@ -70,7 +76,7 @@ pnpm dev
 
 Mở:
 
-- Web: http://localhost:3000 (trang chủ hiển thị trạng thái hệ thống **thật**)
+- Web: http://127.0.0.1:3000 (hoặc http://localhost:3000)
 - API health: http://localhost:4000/health
 - MinIO console: http://localhost:9001 (đăng nhập bằng `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` trong `.env`)
 
@@ -124,26 +130,47 @@ Mở VS Code từ WSL: `code .` (cần extension **WSL**). Trình duyệt Window
 
 ## 4. Danh sách scripts (chạy ở thư mục gốc)
 
-| Script                                                                      | Mô tả                                                                                                |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                                                  | Build `shared`, chạy song song web + api + worker (watch)                                            |
-| `pnpm dev:web` / `dev:api` / `dev:worker`                                   | Chạy riêng từng app                                                                                  |
-| `pnpm build`                                                                | Build production tất cả package (theo thứ tự phụ thuộc)                                              |
-| `pnpm start:api` / `start:worker` / `start:web`                             | Chạy bản build                                                                                       |
-| `pnpm lint`                                                                 | ESLint toàn bộ                                                                                       |
-| `pnpm typecheck`                                                            | Kiểm tra kiểu TypeScript toàn bộ                                                                     |
-| `pnpm test`                                                                 | Chạy test (Vitest) toàn bộ                                                                           |
-| `pnpm format` / `format:check`                                              | Prettier                                                                                             |
-| `pnpm check`                                                                | format:check + lint + typecheck + test                                                               |
-| `pnpm infra:up` / `infra:down` / `infra:ps` / `infra:logs` / `infra:config` | Docker Compose                                                                                       |
-| `pnpm db:migrate`                                                           | `prisma migrate dev` (tạo/áp dụng migration)                                                         |
-| `pnpm db:deploy`                                                            | `prisma migrate deploy` (môi trường triển khai)                                                      |
-| `pnpm db:generate` / `db:studio`                                            | Prisma Client / Prisma Studio                                                                        |
-| `pnpm health`                                                               | Gọi `GET /health` và in kết quả (exit 1 nếu hệ thống down)                                           |
-| `pnpm test:e2e`                                                             | Build web rồi chạy kiểm thử giao diện Playwright (8 trang × 3 kích thước màn hình + luồng tương tác) |
-| `pnpm --filter @acs/web test:e2e:install`                                   | Cài trình duyệt Chromium cho Playwright (chạy 1 lần)                                                 |
+| Script                                                                      | Mô tả                                                                                |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `pnpm dev`                                                                  | Build `shared`, chạy song song web + api + worker (watch)                            |
+| `pnpm dev:web` / `dev:api` / `dev:worker`                                   | Chạy riêng từng app                                                                  |
+| `pnpm build`                                                                | Build production tất cả package (theo thứ tự phụ thuộc)                              |
+| `pnpm start:api` / `start:worker` / `start:web`                             | Chạy bản build                                                                       |
+| `pnpm lint`                                                                 | ESLint toàn bộ                                                                       |
+| `pnpm typecheck`                                                            | Kiểm tra kiểu TypeScript toàn bộ                                                     |
+| `pnpm test`                                                                 | Chạy test (Vitest) toàn bộ                                                           |
+| `pnpm format` / `format:check`                                              | Prettier                                                                             |
+| `pnpm check`                                                                | format:check + lint + typecheck + test                                               |
+| `pnpm infra:up` / `infra:down` / `infra:ps` / `infra:logs` / `infra:config` | Docker Compose                                                                       |
+| `pnpm db:migrate`                                                           | `prisma migrate dev` (tạo/áp dụng migration)                                         |
+| `pnpm db:deploy`                                                            | `prisma migrate deploy` (môi trường triển khai)                                      |
+| `pnpm db:generate` / `db:studio`                                            | Prisma Client / Prisma Studio                                                        |
+| `pnpm db:seed`                                                              | Tạo workspace phát triển + 12 sản phẩm MẪU (idempotent, không ghi đè dữ liệu đã sửa) |
+| `pnpm health`                                                               | Gọi `GET /health` và in kết quả (exit 1 nếu hệ thống down)                           |
+| `pnpm test:integration`                                                     | Kiểm thử tích hợp API với PostgreSQL + MinIO thật (cần `infra:up` + `db:deploy`)     |
+| `pnpm test:e2e`                                                             | Build web rồi chạy Playwright trên dữ liệu thật (cần `pnpm dev:api` đang chạy)       |
+| `pnpm --filter @acs/web test:e2e:install`                                   | Cài trình duyệt Chromium cho Playwright (chạy 1 lần)                                 |
 
-Screenshot của lần chạy E2E gần nhất nằm ở `apps/web/e2e-screenshots/` (không commit).
+Screenshot của lần chạy E2E gần nhất nằm ở `apps/web/e2e-screenshots/` (không commit). Dữ liệu do test tạo
+(tiền tố SKU `IT…`, `IM…`, `E2E…`) được tự dọn sau khi chạy.
+
+---
+
+## 4b. Hướng dẫn sử dụng nhanh (Phase 02)
+
+**Thêm sản phẩm:** Sản phẩm → **Thêm sản phẩm** → nhập tên, SKU (tự IN HOA, không trùng), danh mục, giá bán (nhập
+`199.000` hoặc `199000`), thông số tuỳ chọn → **Lưu sản phẩm**. Bấm **Thêm ảnh** trên thông báo để mở trang chi tiết.
+
+**Upload ảnh:** trang chi tiết sản phẩm → kéo thả ảnh JPG/PNG/WebP (≤ 10 MB/ảnh). Ảnh được tải thẳng lên MinIO, máy chủ
+kiểm tra nội dung thật trước khi lưu; ảnh trùng nội dung được dùng lại. Dùng ★ để chọn ảnh đại diện, ‹ › để sắp xếp,
+biểu tượng gỡ để bỏ ảnh khỏi sản phẩm (ảnh vẫn ở Thư viện). Thư viện cũng có nút **Tải ảnh lên** riêng.
+
+**Import Excel/CSV:** Sản phẩm → **Import Excel/CSV** → tải **file mẫu** (.xlsx hoặc .csv UTF-8) → điền dữ liệu → chọn file →
+kiểm tra cột được ghép tự động → chọn cách xử lý SKU trùng (bỏ qua / cập nhật / chỉ nhập mới) → **Kiểm tra dữ liệu** (chưa ghi)
+→ **Nhập N dòng hợp lệ**. Cột "URL hình ảnh" chỉ được ghi nhận; tải ảnh từ URL ở trang chi tiết chỉ hoạt động khi
+`IMPORT_IMAGE_ALLOWED_HOSTS` có tên miền nguồn mà bạn có quyền sử dụng ảnh.
+
+**Xuất dữ liệu:** Sản phẩm → **Xuất file** → Excel hoặc CSV theo bộ lọc hiện tại.
 
 ---
 

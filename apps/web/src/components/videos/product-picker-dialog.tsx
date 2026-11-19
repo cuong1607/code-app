@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import type { Product } from '@acs/shared';
 import {
   EmptyState,
   ErrorState,
@@ -20,48 +21,42 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useAsync } from '@/hooks/use-async';
-import { categoryName, productRepository } from '@/lib/data';
-import { normalizeText } from '@/lib/data/query';
-import { formatVnd } from '@/lib/format';
-import type { Product } from '@/types/domain';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { productRepository } from '@/lib/data';
+import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { hueFromString } from '@/types/domain';
 
-/** Hộp thoại chọn nhiều sản phẩm (dùng chung cho các studio). */
+/** Hộp thoại chọn sản phẩm THẬT từ database (tìm kiếm phía server). */
 export function ProductPickerDialog({
   open,
   onOpenChange,
-  initialIds,
+  initial,
   onConfirm,
   title = 'Chọn sản phẩm',
-  single = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialIds: readonly string[];
+  initial: readonly Product[];
   onConfirm: (products: Product[]) => void;
   title?: string;
-  single?: boolean;
 }) {
-  const products = useAsync(() => productRepository.options(), []);
   const [search, setSearch] = useState('');
-  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(initialIds));
+  const debounced = useDebouncedValue(search);
+  const products = useAsync(() => productRepository.options(debounced || undefined), [debounced]);
+  const [picked, setPicked] = useState<Map<string, Product>>(
+    () => new Map(initial.map((p) => [p.id, p])),
+  );
 
-  const filtered = useMemo(() => {
-    const term = normalizeText(search);
-    return (products.data ?? []).filter(
-      (p) =>
-        !term || normalizeText(`${p.name} ${p.sku} ${categoryName(p.categoryId)}`).includes(term),
-    );
-  }, [products.data, search]);
-
-  const toggle = (id: string) =>
+  const toggle = (p: Product) =>
     setPicked((prev) => {
-      if (single) return new Set([id]);
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const next = new Map(prev);
+      if (next.has(p.id)) next.delete(p.id);
+      else next.set(p.id, p);
       return next;
     });
+
+  const list = products.data ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -69,7 +64,7 @@ export function ProductPickerDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Danh sách sản phẩm DEMO (không bao gồm sản phẩm đã lưu trữ).
+            Sản phẩm trong database (không gồm sản phẩm đã lưu trữ).
           </DialogDescription>
         </DialogHeader>
         <SearchInput
@@ -81,21 +76,19 @@ export function ProductPickerDialog({
         <DialogBody className="max-h-[50vh]">
           {products.error ? (
             <ErrorState message={products.error} onRetry={products.reload} />
-          ) : products.loading ? (
+          ) : products.loading && !products.data ? (
             <LoadingState rows={5} />
-          ) : filtered.length === 0 ? (
-            <EmptyState title="Không có sản phẩm phù hợp" />
+          ) : list.length === 0 ? (
+            <EmptyState
+              title={search ? 'Không có sản phẩm phù hợp' : 'Chưa có sản phẩm'}
+              description={search ? undefined : 'Thêm sản phẩm ở trang Sản phẩm.'}
+            />
           ) : (
-            <ul
-              className="flex flex-col gap-1"
-              role="listbox"
-              aria-multiselectable={!single}
-              aria-label="Sản phẩm"
-            >
-              {filtered.map((p) => {
+            <ul className="flex flex-col gap-1" aria-label="Sản phẩm">
+              {list.map((p) => {
                 const checked = picked.has(p.id);
                 return (
-                  <li key={p.id} role="option" aria-selected={checked}>
+                  <li key={p.id}>
                     <label
                       className={cn(
                         'flex cursor-pointer items-center gap-3 rounded-lg border p-2 transition-colors',
@@ -106,18 +99,25 @@ export function ProductPickerDialog({
                     >
                       <Checkbox
                         checked={checked}
-                        onCheckedChange={() => toggle(p.id)}
+                        onCheckedChange={() => toggle(p)}
                         aria-label={`Chọn ${p.name}`}
                       />
-                      <MediaPreview image={p.images[0]} className="size-10" />
+                      <MediaPreview
+                        image={{
+                          id: p.id,
+                          url: p.primaryImage?.previewUrl ?? undefined,
+                          hue: hueFromString(p.id),
+                        }}
+                        className="size-10"
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{p.name}</span>
                         <span className="text-muted-foreground block text-xs">
-                          {p.sku} · {categoryName(p.categoryId)} · {p.images.length} ảnh
+                          {p.sku} · {p.category} · {p.imageCount} ảnh
                         </span>
                       </span>
                       <span className="tabular text-muted-foreground hidden text-xs sm:block">
-                        {formatVnd(p.price)}
+                        {formatMoney(p.sellingPrice, p.currency)}
                       </span>
                     </label>
                   </li>
@@ -133,7 +133,7 @@ export function ProductPickerDialog({
           </Button>
           <Button
             onClick={() => {
-              onConfirm((products.data ?? []).filter((p) => picked.has(p.id)));
+              onConfirm([...picked.values()]);
               onOpenChange(false);
             }}
           >

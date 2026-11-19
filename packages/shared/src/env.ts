@@ -47,13 +47,38 @@ const aiEnvSchema = z.object({
   ELEVENLABS_API_KEY: optionalString,
 });
 
+/** Workspace phát triển cố định (seed tạo sẵn). KHÔNG phải xác thực. */
+export const DEV_WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
+
 export const apiEnvSchema = commonEnvSchema
   .extend(redisEnvSchema.shape)
   .extend(s3EnvSchema.shape)
   .extend(aiEnvSchema.shape)
   .extend({
     API_PORT: port.default(4000),
-    API_HOST: z.string().default('0.0.0.0'),
+    // Mặc định chỉ nghe trên loopback: API chưa có xác thực (Phase 09)
+    API_HOST: z.string().default('127.0.0.1'),
+    /**
+     * dev-local: mọi request được gán vào DEV_WORKSPACE_ID và CHỈ chấp nhận kết nối từ máy cục bộ.
+     * Không phải xác thực thật – bị cấm trong production (xem refine bên dưới).
+     */
+    AUTH_MODE: z.enum(['dev-local']).default('dev-local'),
+    DEV_WORKSPACE_ID: z.uuid().default(DEV_WORKSPACE_ID),
+    /** Endpoint S3 mà TRÌNH DUYỆT dùng cho presigned URL (mặc định = S3_ENDPOINT) */
+    S3_PUBLIC_ENDPOINT: z.preprocess(emptyToUndefined, z.url().optional()),
+    MEDIA_MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(10),
+    MEDIA_UPLOAD_TTL_SEC: z.coerce.number().int().min(60).max(3600).default(900),
+    MEDIA_CLEANUP_INTERVAL_SEC: z.coerce.number().int().min(0).max(86_400).default(600),
+    /** Tên miền được phép tải ảnh từ URL (phân tách dấu phẩy). Rỗng = tắt tính năng. */
+    IMPORT_IMAGE_ALLOWED_HOSTS: z
+      .string()
+      .default('')
+      .transform((v) =>
+        v
+          .split(',')
+          .map((h) => h.trim().toLowerCase())
+          .filter(Boolean),
+      ),
     CORS_ORIGINS: z
       .string()
       .default('http://localhost:3000')
@@ -69,6 +94,16 @@ export const apiEnvSchema = commonEnvSchema
       .refine((value) => /^postgres(ql)?:\/\//.test(value), {
         message: 'DATABASE_URL phải bắt đầu bằng postgresql://',
       }),
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production' && env.AUTH_MODE === 'dev-local') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_MODE'],
+        message:
+          'AUTH_MODE=dev-local KHÔNG được phép khi NODE_ENV=production (chưa có xác thực thật – dự kiến Phase 09)',
+      });
+    }
   });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

@@ -12,13 +12,12 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { RUNNING_VIDEO_STATUSES } from '@acs/shared';
+import { type VideoDraft, normalizeSearchText } from '@acs/shared';
 import {
   BatchProgress,
   ConfirmDialog,
   DataTable,
   type DataTableColumn,
-  DemoBadge,
   EmptyState,
   MediaPreview,
   SearchInput,
@@ -37,15 +36,16 @@ import { Progress } from '@/components/ui/misc';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useSelection } from '@/hooks/use-selection';
-import { type VideoJobFilter, voiceName } from '@/lib/data';
-import { normalizeText } from '@/lib/data/query';
+import { describeError } from '@/lib/api/client';
+import { voiceName } from '@/lib/data';
 import { VIDEO_STATUS_META } from '@/lib/labels';
-import type { VideoJob } from '@/types/domain';
 import { cn } from '@/lib/utils';
+import { hueFromString } from '@/types/domain';
 import { JobDetailDialog } from './job-detail-dialog';
 import type { VideoFactoryState } from './use-video-factory';
 
-const TABS: { id: VideoJobFilter; label: string }[] = [
+type Tab = 'all' | 'queued' | 'running' | 'completed' | 'failed';
+const TABS: { id: Tab; label: string }[] = [
   { id: 'all', label: 'Tất cả' },
   { id: 'queued', label: 'Chờ xử lý' },
   { id: 'running', label: 'Đang chạy' },
@@ -53,65 +53,43 @@ const TABS: { id: VideoJobFilter; label: string }[] = [
   { id: 'failed', label: 'Thất bại' },
 ];
 
-function matchesTab(job: VideoJob, tab: VideoJobFilter) {
-  if (tab === 'all') return true;
-  if (tab === 'running') return RUNNING_VIDEO_STATUSES.includes(job.status);
-  return job.status === tab;
-}
+const RUN_REASON = 'Chạy luồng cần worker render – dự kiến Phase 07';
 
-const RERUN_REASON = 'Chạy lại cần backend hàng đợi sản xuất – dự kiến Phase 07';
+/** Phase 02: mọi luồng là bản nháp đã lưu DB, trạng thái "Chờ xử lý" (chưa có worker render). */
+const matchesTab = (tab: Tab) => tab === 'all' || tab === 'queued';
 
 export function FactoryTable({ state }: { state: VideoFactoryState }) {
-  const { jobs, jobsLoading, jobsError, reloadJobs, removeDrafts } = state;
-  const [tab, setTab] = useState<VideoJobFilter>('all');
+  const { drafts, draftsLoading, draftsError, reloadDrafts, removeDrafts } = state;
+  const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
   const debounced = useDebouncedValue(search, 200);
-  const [detail, setDetail] = useState<VideoJob>();
-  const [confirmDraftIds, setConfirmDraftIds] = useState<string[]>([]);
+  const [detail, setDetail] = useState<VideoDraft>();
+  const [confirmIds, setConfirmIds] = useState<string[]>([]);
   const selection = useSelection();
 
-  const counts = useMemo(
-    () =>
-      Object.fromEntries(
-        TABS.map((t) => [t.id, jobs.filter((j) => matchesTab(j, t.id)).length]),
-      ) as Record<VideoJobFilter, number>,
-    [jobs],
-  );
-
   const rows = useMemo(() => {
-    const term = normalizeText(debounced);
-    return jobs.filter(
-      (j) =>
-        matchesTab(j, tab) &&
-        (!term || normalizeText(`${j.name} ${j.productName} ${j.prompt}`).includes(term)),
+    if (!matchesTab(tab)) return [];
+    const term = normalizeSearchText(debounced);
+    return drafts.filter(
+      (j) => !term || normalizeSearchText(`${j.name} ${j.productName} ${j.prompt}`).includes(term),
     );
-  }, [jobs, tab, debounced]);
+  }, [drafts, tab, debounced]);
 
-  const segments = useMemo(
-    () =>
-      (
-        [
-          'completed',
-          'rendering',
-          'imaging',
-          'voicing',
-          'scripting',
-          'queued',
-          'failed',
-          'cancelled',
-        ] as const
-      ).map((s) => ({
-        key: s,
-        meta: VIDEO_STATUS_META[s],
-        count: jobs.filter((j) => j.status === s).length,
-      })),
-    [jobs],
-  );
+  const counts: Record<Tab, number> = {
+    all: drafts.length,
+    queued: drafts.length,
+    running: 0,
+    completed: 0,
+    failed: 0,
+  };
+  const segments = (['completed', 'rendering', 'queued', 'failed'] as const).map((s) => ({
+    key: s,
+    meta: VIDEO_STATUS_META[s],
+    count: s === 'queued' ? drafts.length : 0,
+  }));
+  const selectedRows = drafts.filter((j) => selection.has(j.id));
 
-  const selectedJobs = jobs.filter((j) => selection.has(j.id));
-  const selectedDraftIds = selectedJobs.filter((j) => j.isLocalDraft).map((j) => j.id);
-
-  const columns: DataTableColumn<VideoJob>[] = [
+  const columns: DataTableColumn<VideoDraft>[] = [
     {
       id: 'index',
       header: 'STT',
@@ -122,7 +100,7 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
       id: 'name',
       header: 'Tên luồng',
       cell: (j) => (
-        <div className="flex w-52 flex-col gap-1">
+        <div className="flex w-52 flex-col gap-0.5">
           <button
             type="button"
             onClick={() => setDetail(j)}
@@ -130,7 +108,7 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
           >
             {j.name}
           </button>
-          {j.isLocalDraft ? <DemoBadge label="NHÁP CỤC BỘ" /> : j.isDemo ? <DemoBadge /> : null}
+          <span className="text-muted-foreground font-mono text-[10px]">{j.batchKey}</span>
         </div>
       ),
     },
@@ -151,102 +129,74 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
     {
       id: 'images',
       header: 'Ảnh tham chiếu',
-      cell: (j) => (
-        <div className="flex items-center -space-x-2">
-          {j.images.slice(0, 3).map((img) => (
-            <MediaPreview key={img.id} image={img} className="ring-card size-9 ring-2" />
-          ))}
-          {j.images.length > 3 ? (
-            <span className="bg-muted ring-card tabular grid size-9 place-items-center rounded-md text-[11px] font-medium ring-2">
-              +{j.images.length - 3}
-            </span>
-          ) : null}
-        </div>
-      ),
+      cell: (j) =>
+        j.images.length ? (
+          <div className="flex items-center -space-x-2">
+            {j.images.slice(0, 3).map((img) => (
+              <MediaPreview
+                key={img.id}
+                image={{ id: img.id, url: img.previewUrl ?? undefined, hue: hueFromString(img.id) }}
+                className="ring-card size-9 ring-2"
+              />
+            ))}
+            {j.images.length > 3 ? (
+              <span className="bg-muted ring-card tabular grid size-9 place-items-center rounded-md text-[11px] font-medium ring-2">
+                +{j.images.length - 3}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-muted-foreground text-xs">Không có ảnh</span>
+        ),
     },
     {
       id: 'aspect',
       header: 'Tỷ lệ',
       align: 'center',
-      cell: (j) => <span className="tabular text-xs font-medium">{j.aspectRatio}</span>,
+      cell: (j) => <span className="tabular text-xs font-medium">{j.config.aspectRatio}</span>,
     },
     {
       id: 'duration',
       header: 'Thời lượng',
       align: 'center',
-      cell: (j) => <span className="tabular text-xs">{j.durationSec}s</span>,
+      cell: (j) => <span className="tabular text-xs">{j.config.durationSec}s</span>,
     },
     {
       id: 'quality',
       header: 'Chất lượng',
       align: 'center',
-      cell: (j) => <span className="text-xs">{j.quality}</span>,
+      cell: (j) => <span className="text-xs">{j.config.quality}</span>,
     },
     {
       id: 'voice',
       header: 'Giọng đọc',
       cell: (j) => (
-        <span className="block w-32 truncate text-xs" title={voiceName(j.voiceId)}>
-          {voiceName(j.voiceId)}
+        <span className="block w-32 truncate text-xs" title={voiceName(j.config.voiceId)}>
+          {voiceName(j.config.voiceId)}
         </span>
       ),
     },
     {
       id: 'status',
       header: 'Trạng thái',
-      cell: (j) => <StatusBadge meta={VIDEO_STATUS_META[j.status]} />,
+      cell: () => <StatusBadge meta={VIDEO_STATUS_META.queued} />,
     },
     {
       id: 'progress',
       header: 'Tiến độ',
       cell: (j) => (
         <div className="flex w-28 items-center gap-2">
-          <Progress
-            value={j.progress}
-            label={`Tiến độ ${j.name}`}
-            tone={
-              j.status === 'failed'
-                ? 'danger'
-                : j.status === 'completed'
-                  ? 'success'
-                  : j.status === 'cancelled'
-                    ? 'neutral'
-                    : 'primary'
-            }
-          />
-          <span className="tabular w-8 text-right text-xs">{j.progress}%</span>
+          <Progress value={0} label={`Tiến độ ${j.name}`} tone="neutral" />
+          <span className="tabular w-8 text-right text-xs">0%</span>
         </div>
       ),
     },
     {
       id: 'result',
       header: 'Kết quả',
-      cell: (j) =>
-        j.status === 'completed' ? (
-          <button
-            type="button"
-            onClick={() => setDetail(j)}
-            className="group/res relative block cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            aria-label={`Xem kết quả ${j.name}`}
-          >
-            <MediaPreview image={j.thumbnail} aspect="9:16" kind="video" className="w-9" />
-            <Film
-              className="absolute inset-0 m-auto size-4 text-white opacity-0 drop-shadow group-hover/res:opacity-100"
-              aria-hidden
-            />
-          </button>
-        ) : j.status === 'failed' ? (
-          <Tooltip content={j.errorMessage ?? 'Thất bại'}>
-            <span
-              tabIndex={0}
-              className="text-danger line-clamp-2 w-32 cursor-help text-xs outline-none"
-            >
-              {j.errorMessage ?? 'Thất bại'}
-            </span>
-          </Tooltip>
-        ) : (
-          <span className="text-muted-foreground text-xs">—</span>
-        ),
+      cell: () => (
+        <span className="text-muted-foreground text-xs whitespace-nowrap">Chưa render</span>
+      ),
     },
     {
       id: 'actions',
@@ -271,23 +221,16 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => setDetail(j)}>
-                <Eye /> Xem chi tiết & preview
+                <Eye /> Xem & sửa
               </DropdownMenuItem>
               <DropdownMenuItem disabled>
-                <RotateCw /> Chạy lại
+                <RotateCw /> Chạy
                 <span className="text-muted-foreground ml-auto text-[10px]">Phase 07</span>
               </DropdownMenuItem>
-              {j.isLocalDraft ? (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => setConfirmDraftIds([j.id])}
-                  >
-                    <Trash2 /> Xoá luồng nháp
-                  </DropdownMenuItem>
-                </>
-              ) : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirmIds([j.id])}>
+                <Trash2 /> Xoá luồng nháp
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -305,7 +248,6 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
           <h2 id="factory-table-title" className="font-semibold">
             Bảng sản xuất
           </h2>
-          <DemoBadge label="DEMO + NHÁP" />
           <BatchProgress
             segments={segments}
             title=""
@@ -376,21 +318,21 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
             variant="outline"
             disabled={selection.count !== 1}
             title={selection.count !== 1 ? 'Chọn đúng 1 dòng để xem chi tiết' : undefined}
-            onClick={() => setDetail(selectedJobs[0])}
+            onClick={() => setDetail(selectedRows[0])}
           >
             <Eye /> Xem chi tiết
           </Button>
-          <UnavailableButton size="sm" variant="outline" reason={RERUN_REASON}>
+          <UnavailableButton size="sm" variant="outline" reason={RUN_REASON}>
             <RotateCw /> Chạy lại
           </UnavailableButton>
-          {selectedDraftIds.length ? (
+          {selection.count ? (
             <Button
               size="sm"
               variant="ghost"
               className="text-danger"
-              onClick={() => setConfirmDraftIds(selectedDraftIds)}
+              onClick={() => setConfirmIds([...selection.selected])}
             >
-              <ListX /> Xoá {selectedDraftIds.length} nháp
+              <ListX /> Xoá {selection.count} luồng
             </Button>
           ) : null}
           <span className="text-muted-foreground ml-auto text-xs">
@@ -407,36 +349,50 @@ export function FactoryTable({ state }: { state: VideoFactoryState }) {
         columns={columns}
         getRowId={(j) => j.id}
         selection={selection}
-        loading={jobsLoading && jobs.length === 0}
-        error={jobsError}
-        onRetry={reloadJobs}
+        loading={draftsLoading}
+        error={draftsError}
+        onRetry={reloadDrafts}
         minWidth={1380}
-        rowClassName={(j) => (j.isLocalDraft ? 'bg-primary/4' : undefined)}
         empty={
           <EmptyState
             icon={Film}
-            title={search || tab !== 'all' ? 'Không có tác vụ phù hợp' : 'Chưa có luồng sản xuất'}
+            title={search || tab !== 'all' ? 'Không có luồng phù hợp' : 'Chưa có luồng sản xuất'}
             description={
-              search || tab !== 'all'
-                ? 'Thử đổi tab hoặc từ khoá tìm kiếm.'
-                : 'Chọn sản phẩm ở panel bên trái rồi bấm "Tạo luồng sản xuất".'
+              tab === 'running' || tab === 'completed' || tab === 'failed'
+                ? 'Chưa có luồng nào được chạy – worker render sẽ có ở Phase 06/07.'
+                : search
+                  ? 'Thử đổi từ khoá tìm kiếm.'
+                  : 'Chọn sản phẩm ở panel bên trái rồi bấm "Tạo luồng sản xuất".'
             }
           />
         }
       />
 
-      <JobDetailDialog job={detail} onOpenChange={(open) => !open && setDetail(undefined)} />
+      <JobDetailDialog
+        job={detail}
+        onOpenChange={(open) => !open && setDetail(undefined)}
+        onSaved={(d) => {
+          setDetail(d);
+          reloadDrafts();
+        }}
+      />
       <ConfirmDialog
-        open={confirmDraftIds.length > 0}
-        onOpenChange={(open) => !open && setConfirmDraftIds([])}
+        open={confirmIds.length > 0}
+        onOpenChange={(open) => !open && setConfirmIds([])}
         destructive
-        title={`Xoá ${confirmDraftIds.length} luồng nháp?`}
-        description="Các luồng nháp chỉ nằm trên trình duyệt và chưa được gửi lên máy chủ. Thao tác không thể hoàn tác."
-        confirmLabel="Xoá nháp"
+        title={`Xoá ${confirmIds.length} luồng nháp?`}
+        description="Luồng nháp sẽ bị xoá khỏi database. Bài đăng nháp đã gắn với luồng (nếu có) vẫn được giữ nhưng không còn gắn video."
+        confirmLabel="Xoá"
         onConfirm={() => {
-          removeDrafts(confirmDraftIds);
-          selection.setMany(confirmDraftIds, false);
-          toast.success(`Đã xoá ${confirmDraftIds.length} luồng nháp`);
+          const ids = confirmIds;
+          void removeDrafts(ids)
+            .then(() => {
+              selection.setMany(ids, false);
+              toast.success(`Đã xoá ${ids.length} luồng nháp`);
+            })
+            .catch((error: unknown) =>
+              toast.error('Không xoá được', { description: describeError(error) }),
+            );
         }}
       />
     </section>

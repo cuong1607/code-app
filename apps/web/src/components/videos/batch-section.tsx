@@ -11,7 +11,7 @@ const NEED_BACKEND = 'Cần backend hàng đợi sản xuất (BullMQ worker) �
 
 /** Khu vực 4: Tạo batch. */
 export function BatchSection({ state }: { state: VideoFactoryState }) {
-  const { selected, config, totalVideos, createDrafts } = state;
+  const { selected, config, totalVideos, createDrafts, creating } = state;
   const promptEmpty = !config.prompt.trim();
   const disabledReason =
     selected.length === 0
@@ -63,16 +63,21 @@ export function BatchSection({ state }: { state: VideoFactoryState }) {
       </p>
 
       <Button
-        disabled={Boolean(disabledReason)}
+        disabled={Boolean(disabledReason) || creating}
         title={disabledReason}
-        onClick={() => {
-          const count = createDrafts();
-          toast.success(`Đã tạo ${count} luồng sản xuất nháp`, {
-            description: 'Các luồng chỉ nằm trên trình duyệt, CHƯA gửi lên máy chủ và CHƯA chạy.',
-          });
+        onClick={async () => {
+          try {
+            const count = await createDrafts();
+            toast.success(`Đã lưu ${count} luồng sản xuất nháp`, {
+              description:
+                'Đã lưu vào database ở trạng thái "Chờ xử lý". Render video sẽ có ở Phase 06/07.',
+            });
+          } catch (error) {
+            toast.error('Không tạo được luồng sản xuất', { description: (error as Error).message });
+          }
         }}
       >
-        <Workflow /> Tạo luồng sản xuất
+        <Workflow /> {creating ? 'Đang lưu…' : 'Tạo luồng sản xuất'}
       </Button>
       {disabledReason ? (
         <p className="text-muted-foreground -mt-1.5 text-xs">{disabledReason}</p>

@@ -31,13 +31,15 @@ export function validateSchedule(opts: {
   mode: 'immediate' | 'scheduled' | 'draft';
   startLocal: string;
   videoCount: number;
-  accountId: string;
+  accountId?: string | null;
+  /** Chỉ bắt buộc chọn tài khoản khi đã có tài khoản TikTok kết nối (Phase 08) */
+  requireAccount?: boolean;
   caption: string;
   hashtags: string[];
   nowMs: number;
 }): ScheduleValidation {
   const errors: string[] = [];
-  if (!opts.accountId) errors.push('Chọn tài khoản TikTok');
+  if (opts.requireAccount && !opts.accountId) errors.push('Chọn tài khoản TikTok');
   if (opts.videoCount === 0) errors.push('Chọn ít nhất 1 video');
   if (opts.caption.length > TIKTOK_CAPTION_MAX)
     errors.push(`Caption tối đa ${TIKTOK_CAPTION_MAX} ký tự`);

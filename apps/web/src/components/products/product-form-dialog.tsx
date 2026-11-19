@@ -1,9 +1,16 @@
 'use client';
 
-import { Star, Trash2 } from 'lucide-react';
-import { useState } from 'react';
-import { PRODUCT_STATUSES, type ProductInput, productInputSchema } from '@acs/shared';
-import { DemoNotice, Field, FileUpload, type LocalFile, MediaPreview } from '@/components/common';
+import { Plus, Trash2 } from 'lucide-react';
+import { useId, useState } from 'react';
+import {
+  CURRENCIES,
+  PRODUCT_STATUSES,
+  type Product,
+  type ProductDetail,
+  parseMoney,
+  productInputSchema,
+} from '@acs/shared';
+import { Field } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -17,115 +24,141 @@ import {
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { CATEGORIES } from '@/lib/data';
+import { describeError } from '@/lib/api/client';
+import { fieldErrorsFrom, productRepository } from '@/lib/data';
 import { PRODUCT_STATUS_META } from '@/lib/labels';
-import type { ImageRef, Product } from '@/types/domain';
 
-type FormState = Omit<ProductInput, 'price'> & { price: string };
-type Errors = Partial<Record<keyof ProductInput, string>>;
+interface FormState {
+  name: string;
+  sku: string;
+  category: string;
+  brand: string;
+  costPrice: string;
+  sellingPrice: string;
+  currency: (typeof CURRENCIES)[number];
+  status: (typeof PRODUCT_STATUSES)[number];
+  sourceUrl: string;
+  description: string;
+  attributes: { key: string; value: string }[];
+}
 
-const EMPTY: FormState = {
-  name: '',
-  sku: '',
-  category: '',
-  price: '',
-  status: 'draft',
-  description: '',
-  sourceUrl: '',
-};
+/** "199.000" -> 199000, "19.99" -> 19.99, "" -> null, chữ -> NaN (để schema báo lỗi). */
+const num = (s: string): number | null => (s.trim() === '' ? null : (parseMoney(s) ?? Number.NaN));
+const show = (v: string | null | undefined) => (v ? String(Number(v)) : '');
 
-function toForm(product?: Product): FormState {
-  if (!product) return EMPTY;
+function toForm(p?: Product): FormState {
   return {
-    name: product.name,
-    sku: product.sku,
-    category: product.categoryId,
-    price: String(product.price),
-    status: product.status,
-    description: product.description ?? '',
-    sourceUrl: product.sourceUrl ?? '',
+    name: p?.name ?? '',
+    sku: p?.sku ?? '',
+    category: p?.category ?? '',
+    brand: p?.brand ?? '',
+    costPrice: show(p?.costPrice),
+    sellingPrice: show(p?.sellingPrice),
+    currency: p?.currency ?? 'VND',
+    status: p?.status ?? 'draft',
+    sourceUrl: p?.sourceUrl ?? '',
+    description: p?.description ?? '',
+    attributes: Object.entries(p?.attributes ?? {}).map(([key, value]) => ({ key, value })),
   };
 }
 
-export interface ProductFormResult {
-  input: ProductInput;
-  images: ImageRef[];
-}
-
 /**
- * Form thêm/sửa sản phẩm. Validate bằng `productInputSchema` dùng chung với API.
- * Phase 01: kết quả chỉ trả về cho trang dưới dạng bản nháp cục bộ, KHÔNG lưu database.
+ * Form thêm/sửa sản phẩm – LƯU VÀO DATABASE qua API.
+ * Kiểm tra tức thì bằng `productInputSchema` (dùng chung với API); lỗi từ server (VD: SKU trùng)
+ * được hiển thị đúng trường.
  */
 export function ProductFormDialog({
   open,
   onOpenChange,
   product,
-  onSubmit,
+  categories,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product?: Product;
-  onSubmit: (result: ProductFormResult) => void;
+  categories: string[];
+  onSaved: (product: ProductDetail, created: boolean) => void;
 }) {
+  const listId = useId();
   const [form, setForm] = useState<FormState>(() => toForm(product));
-  const [errors, setErrors] = useState<Errors>({});
-  const [images, setImages] = useState<ImageRef[]>(() => product?.images ?? []);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const isEdit = Boolean(product);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
-    if (errors[key as keyof ProductInput]) setErrors((e) => ({ ...e, [key]: undefined }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: '' }));
   };
 
-  const addFiles = (files: LocalFile[]) => {
-    setImages((prev) => {
-      const next = [
-        ...prev,
-        ...files.map((f) => ({
-          id: f.id,
-          url: f.previewUrl,
-          hue: 30,
-          label: f.file.name,
-          isPrimary: false,
-        })),
-      ];
-      if (!next.some((img) => img.isPrimary) && next[0]) next[0] = { ...next[0], isPrimary: true };
-      return next;
-    });
-  };
-
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const price = form.price.trim() === '' ? Number.NaN : Number(form.price.replace(/[.\s]/g, ''));
-    const parsed = productInputSchema.safeParse({ ...form, price });
+    setFormError(undefined);
+    const attributes = Object.fromEntries(
+      form.attributes.filter((a) => a.key.trim()).map((a) => [a.key.trim(), a.value.trim()]),
+    );
+    const payload = {
+      name: form.name,
+      sku: form.sku,
+      category: form.category,
+      brand: form.brand,
+      description: form.description,
+      costPrice: num(form.costPrice),
+      sellingPrice: num(form.sellingPrice) ?? Number.NaN,
+      currency: form.currency,
+      status: form.status,
+      sourceUrl: form.sourceUrl,
+      attributes,
+    };
+    const parsed = productInputSchema.safeParse(payload);
     if (!parsed.success) {
-      const next: Errors = {};
+      const next: Record<string, string> = {};
       for (const issue of parsed.error.issues) {
-        const key = issue.path[0] as keyof ProductInput;
-        if (!next[key]) next[key] = issue.message;
+        const key = String(issue.path[0]);
+        if (!next[key])
+          next[key] =
+            key === 'sellingPrice' && !form.sellingPrice ? 'Vui lòng nhập giá bán' : issue.message;
       }
       setErrors(next);
       return;
     }
-    onSubmit({ input: parsed.data, images });
-    onOpenChange(false);
+    setSaving(true);
+    try {
+      const saved = product
+        ? await productRepository.update(product.id, payload)
+        : await productRepository.create(payload);
+      onSaved(saved, !product);
+      onOpenChange(false);
+    } catch (error) {
+      const fields = fieldErrorsFrom(error);
+      if (Object.keys(fields).length) setErrors(fields);
+      setFormError(describeError(error));
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const isEdit = Boolean(product);
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Chỉnh sửa sản phẩm' : 'Thêm sản phẩm'}</DialogTitle>
-          <DialogDescription>Các trường có dấu * là bắt buộc.</DialogDescription>
+          <DialogDescription>
+            Các trường có dấu * là bắt buộc.{' '}
+            {isEdit ? '' : 'Ảnh sản phẩm được thêm ở trang chi tiết sau khi lưu.'}
+          </DialogDescription>
         </DialogHeader>
         <form id="product-form" onSubmit={submit} noValidate className="contents">
           <DialogBody className="flex flex-col gap-4 pb-1">
-            <DemoNotice tone="info">
-              Phase 01 chưa có backend: bấm Lưu sẽ tạo <strong>bản nháp trong trình duyệt</strong>{' '}
-              (mất khi tải lại trang), <strong>chưa lưu vào database</strong>. Ảnh chỉ được xem
-              trước, chưa tải lên máy chủ.
-            </DemoNotice>
+            {formError ? (
+              <p
+                role="alert"
+                className="border-danger/30 bg-danger/8 text-danger rounded-lg border px-3 py-2 text-sm"
+              >
+                {formError}
+              </p>
+            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 label="Tên sản phẩm"
@@ -148,34 +181,42 @@ export function ProductFormDialog({
                 htmlFor="p-sku"
                 required
                 error={errors.sku}
-                hint="Chữ, số, dấu - hoặc _"
+                hint="Chữ, số, dấu - hoặc _ (tự chuyển IN HOA)"
               >
                 <Input
                   id="p-sku"
                   value={form.sku}
                   onChange={(e) => set('sku', e.target.value.toUpperCase())}
                   aria-invalid={Boolean(errors.sku)}
-                  placeholder="TH-1001"
+                  placeholder="TT-1001"
                 />
               </Field>
-              <Field label="Danh mục" htmlFor="p-category" required error={errors.category}>
-                <NativeSelect
+              <Field
+                label="Danh mục"
+                htmlFor="p-category"
+                required
+                error={errors.category}
+                hint="Chọn có sẵn hoặc nhập danh mục mới"
+              >
+                <Input
                   id="p-category"
+                  list={listId}
                   value={form.category}
                   onChange={(e) => set('category', e.target.value)}
                   aria-invalid={Boolean(errors.category)}
-                  placeholder="Chọn danh mục"
-                  options={CATEGORIES.map((c) => ({ value: c.id, label: c.name }))}
+                  placeholder="VD: Thời trang"
                 />
+                <datalist id={listId}>
+                  {categories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </Field>
-              <Field label="Giá bán (VND)" htmlFor="p-price" required error={errors.price}>
+              <Field label="Thương hiệu" htmlFor="p-brand" error={errors.brand}>
                 <Input
-                  id="p-price"
-                  inputMode="numeric"
-                  value={form.price}
-                  onChange={(e) => set('price', e.target.value)}
-                  aria-invalid={Boolean(errors.price)}
-                  placeholder="199000"
+                  id="p-brand"
+                  value={form.brand}
+                  onChange={(e) => set('brand', e.target.value)}
                 />
               </Field>
               <Field label="Trạng thái" htmlFor="p-status">
@@ -189,6 +230,36 @@ export function ProductFormDialog({
                   }))}
                 />
               </Field>
+              <Field label="Giá vốn" htmlFor="p-cost" error={errors.costPrice}>
+                <Input
+                  id="p-cost"
+                  inputMode="decimal"
+                  value={form.costPrice}
+                  onChange={(e) => set('costPrice', e.target.value)}
+                  aria-invalid={Boolean(errors.costPrice)}
+                  placeholder="90000"
+                />
+              </Field>
+              <div className="grid grid-cols-[1fr_6rem] gap-2">
+                <Field label="Giá bán" htmlFor="p-price" required error={errors.sellingPrice}>
+                  <Input
+                    id="p-price"
+                    inputMode="decimal"
+                    value={form.sellingPrice}
+                    onChange={(e) => set('sellingPrice', e.target.value)}
+                    aria-invalid={Boolean(errors.sellingPrice)}
+                    placeholder="199000"
+                  />
+                </Field>
+                <Field label="Tiền tệ" htmlFor="p-currency">
+                  <NativeSelect
+                    id="p-currency"
+                    value={form.currency}
+                    onChange={(e) => set('currency', e.target.value as FormState['currency'])}
+                    options={CURRENCIES.map((c) => ({ value: c, label: c }))}
+                  />
+                </Field>
+              </div>
               <Field
                 label="Link sản phẩm gốc"
                 htmlFor="p-url"
@@ -220,54 +291,74 @@ export function ProductFormDialog({
               </Field>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <p className="text-sm font-medium">Hình ảnh ({images.length})</p>
-              {images.length ? (
-                <ul className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-                  {images.map((img) => (
-                    <li key={img.id} className="group relative">
-                      <MediaPreview image={img} className="w-full rounded-lg border" />
-                      {img.isPrimary ? (
-                        <span className="bg-sidebar text-sidebar-primary absolute top-1 left-1 rounded px-1 text-[10px] font-semibold">
-                          Ảnh chính
-                        </span>
-                      ) : null}
-                      <div className="absolute inset-x-1 bottom-1 flex justify-end gap-1 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-                        <Button
-                          size="icon-xs"
-                          variant="secondary"
-                          aria-label="Đặt làm ảnh chính"
-                          onClick={() =>
-                            setImages((prev) =>
-                              prev.map((p) => ({ ...p, isPrimary: p.id === img.id })),
-                            )
-                          }
-                        >
-                          <Star />
-                        </Button>
-                        <Button
-                          size="icon-xs"
-                          variant="secondary"
-                          aria-label="Bỏ ảnh"
-                          onClick={() => setImages((prev) => prev.filter((p) => p.id !== img.id))}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 text-sm font-medium">
+                Thông số (màu sắc, kích thước, chất liệu…)
+              </legend>
+              {form.attributes.map((a, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1.5fr_auto] gap-2">
+                  <Input
+                    aria-label={`Tên thông số ${i + 1}`}
+                    value={a.key}
+                    placeholder="Màu sắc"
+                    onChange={(e) =>
+                      set(
+                        'attributes',
+                        form.attributes.map((x, j) =>
+                          j === i ? { ...x, key: e.target.value } : x,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    aria-label={`Giá trị thông số ${i + 1}`}
+                    value={a.value}
+                    placeholder="Trắng, Đen"
+                    onChange={(e) =>
+                      set(
+                        'attributes',
+                        form.attributes.map((x, j) =>
+                          j === i ? { ...x, value: e.target.value } : x,
+                        ),
+                      )
+                    }
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Xoá thông số"
+                    onClick={() =>
+                      set(
+                        'attributes',
+                        form.attributes.filter((_, j) => j !== i),
+                      )
+                    }
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              ))}
+              {errors.attributes ? (
+                <p className="text-danger text-xs">{errors.attributes}</p>
               ) : null}
-              <FileUpload onFiles={addFiles} compact />
-            </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="self-start"
+                onClick={() => set('attributes', [...form.attributes, { key: '', value: '' }])}
+                disabled={form.attributes.length >= 30}
+              >
+                <Plus /> Thêm thông số
+              </Button>
+            </fieldset>
           </DialogBody>
         </form>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Huỷ
           </Button>
-          <Button type="submit" form="product-form">
-            {isEdit ? 'Lưu thay đổi (nháp)' : 'Lưu bản nháp'}
+          <Button type="submit" form="product-form" disabled={saving}>
+            {saving ? 'Đang lưu…' : isEdit ? 'Lưu thay đổi' : 'Lưu sản phẩm'}
           </Button>
         </DialogFooter>
       </DialogContent>

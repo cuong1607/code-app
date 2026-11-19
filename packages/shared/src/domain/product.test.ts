@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { productInputSchema } from './product';
+import { productInputSchema, productUpdateSchema } from './product';
 
 const valid = {
   name: 'Áo thun cotton',
-  sku: 'AT-001',
-  category: 'thoi-trang',
-  price: 199000,
+  sku: 'at-001',
+  category: 'Thời trang',
+  sellingPrice: 199000,
   status: 'active' as const,
 };
 
 describe('productInputSchema', () => {
-  it('chấp nhận dữ liệu hợp lệ', () => {
-    expect(productInputSchema.safeParse(valid).success).toBe(true);
+  it('chấp nhận dữ liệu hợp lệ, chuẩn hoá SKU in hoa, áp mặc định', () => {
+    const r = productInputSchema.parse(valid);
+    expect(r.sku).toBe('AT-001');
+    expect(r.currency).toBe('VND');
+    expect(r.attributes).toEqual({});
+    expect(r.brand).toBeUndefined();
   });
 
   it('báo lỗi tiếng Việt cho từng trường sai', () => {
@@ -19,7 +23,8 @@ describe('productInputSchema', () => {
       ...valid,
       name: 'A',
       sku: 'có dấu cách',
-      price: -1,
+      sellingPrice: -1,
+      costPrice: 1.234,
       sourceUrl: 'khong-phai-url',
     });
     expect(result.success).toBe(false);
@@ -28,11 +33,27 @@ describe('productInputSchema', () => {
     );
     expect(byField.name).toContain('ít nhất 2 ký tự');
     expect(byField.sku).toContain('SKU');
-    expect(byField.price).toContain('không được âm');
+    expect(byField.sellingPrice).toContain('không được âm');
+    expect(byField.costPrice).toContain('2 chữ số thập phân');
     expect(byField.sourceUrl).toContain('không hợp lệ');
   });
 
-  it('cho phép sourceUrl rỗng', () => {
-    expect(productInputSchema.safeParse({ ...valid, sourceUrl: '' }).success).toBe(true);
+  it('cho phép sourceUrl/brand rỗng và giá có 2 số thập phân', () => {
+    const r = productInputSchema.parse({
+      ...valid,
+      sourceUrl: '',
+      brand: '  ',
+      sellingPrice: 19.99,
+    });
+    expect(r.sourceUrl).toBeUndefined();
+    expect(r.brand).toBeUndefined();
+    expect(r.sellingPrice).toBe(19.99);
+  });
+});
+
+describe('productUpdateSchema', () => {
+  it('cập nhật từng phần KHÔNG áp giá trị mặc định (tránh ghi đè currency/attributes)', () => {
+    const r = productUpdateSchema.parse({ name: 'Tên mới' });
+    expect(r).toEqual({ name: 'Tên mới' });
   });
 });

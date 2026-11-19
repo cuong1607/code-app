@@ -111,15 +111,15 @@ src/
   lib/api/client.ts     # apiRequest(): timeout, Zod schema, ApiError(code, status, requestId)
   lib/data/             # REPOSITORY – UI chỉ đọc dữ liệu qua đây
   lib/labels.ts         # nhãn tiếng Việt + tone màu cho mọi enum trạng thái
-  mocks/                # DỮ LIỆU DEMO tập trung (tất định, isDemo: true)
-  types/domain.ts       # kiểu domain phía UI
+  lib/catalog.ts        # cấu hình tĩnh: giọng đọc, template, prompt mẫu (KHÔNG phải dữ liệu demo)
+  types/domain.ts       # kiểu riêng của UI (ImageRef…); kiểu nghiệp vụ lấy từ @acs/shared
 ```
 
-Luồng dữ liệu: `component → hooks/useAsync → lib/data (repository) → [Phase 01: mocks] / [Phase 02+: lib/api/client → /api/backend → NestJS]`.
+Luồng dữ liệu (từ Phase 02): `component → hooks/useAsync → lib/data (repository) → lib/api/client → /api/backend → NestJS`.
+Thư mục `mocks/` của Phase 01 đã bị gỡ: không còn dữ liệu demo trộn với dữ liệu thật.
 
-- Enum trạng thái & schema form (VD `productInputSchema`, `VIDEO_JOB_STATUSES`, `PUBLISH_STATUSES`) nằm ở `packages/shared/src/domain`
-  để web và API dùng chung.
-- Thao tác chưa có backend tạo **nháp cục bộ** (`isLocalDraft: true`) trong state React – không lưu, mất khi tải lại.
+- Enum trạng thái & schema (VD `productInputSchema`, `importRequestSchema`, `videoDraftSchema`) nằm ở `packages/shared/src/domain`
+  để web và API dùng chung; phản hồi API được kiểm tra lại bằng chính schema đó ở phía web.
 - Lịch đăng: người dùng nhập giờ VN (`datetime-local`), chuyển sang UTC bằng `vnLocalInputToUtcIso` trước khi lưu.
 - Kiểm thử UI: Vitest (logic) + Playwright (`apps/web/e2e`) chạy trên bản build: 8 route × 3 viewport (1440/1024/390),
   bắt lỗi console, đo tràn ngang, và các luồng tương tác chính.
@@ -127,7 +127,44 @@ Luồng dữ liệu: `component → hooks/useAsync → lib/data (repository) →
 Thư viện thêm ở Phase 01 (lý do): `radix-ui` (primitive truy cập tốt – nền của shadcn/ui), `sonner` (toast chuẩn shadcn),
 `@playwright/test` (kiểm thử trình duyệt thật). Biểu đồ vẽ bằng SVG thuần để không thêm thư viện chart.
 
-## 10. Định hướng (chưa triển khai)
+## 10. Backend dữ liệu (Phase 02)
+
+```
+apps/api/src/
+  auth/        WorkspaceGuard (APP_GUARD) + @WorkspaceId() + @Public(); WorkspaceBootstrapService (tạo dev workspace)
+  products/    ProductsService (CRUD, tìm kiếm), ProductMediaService (gắn/gỡ/đại diện/sắp xếp/tải từ URL)
+  imports/     ImportService (preview/validate/commit/export/template), spreadsheet.ts (exceljs, csv-parse/stringify)
+  media/       MediaService, MediaUploadService (presigned), MediaCleanupService, image-inspector, RemoteImageFetcher
+  drafts/      Video / Publishing / Script drafts + Prompt presets
+  settings/    /settings (deep-merge + strict), /workspace
+  dashboard/   /dashboard/summary
+  storage/     StorageService: presign PUT/GET, head, get (giới hạn byte), put, delete, list – tự khôi phục kết nối
+```
+
+**Cô lập workspace & truy cập.** `WorkspaceGuard` gán `workspaceId` do server quyết định (dev-local: `DEV_WORKSPACE_ID`,
+chỉ loopback, cấm production). Mọi truy vấn có `where: { workspaceId }`; tham chiếu chéo (ảnh, sản phẩm, luồng video)
+đều được kiểm tra thuộc cùng workspace. Phase 09 chỉ cần thay guard bằng xác thực thật.
+
+**Luồng upload ảnh.**
+
+```
+Trình duyệt ──POST /media/uploads {filename,type,size}──▶ API: kiểm tra loại/dung lượng khai báo, tạo media_uploads(pending),
+           ◀── uploadUrl (presigned PUT, Content-Type nằm trong chữ ký, 15 phút)
+Trình duyệt ──PUT file──▶ MinIO (bucket acs-media, key ws/<workspace>/images/<yyyy>/<mm>/<uuid>.<ext>)
+Trình duyệt ──POST /media/uploads/:id/complete──▶ API: HEAD (dung lượng thật) → GET (≤ giới hạn) → magic bytes + kích thước ảnh
+           → SHA-256: trùng → xoá object mới, trả tài nguyên cũ | mới → tạo media_assets
+Job định kỳ: phiên pending quá hạn → xoá object + expired; object mồ côi dưới ws/ (> 24h) → xoá
+```
+
+**Tìm kiếm tiếng Việt.** Cột `search_text` = `normalizeSearchText(tên + SKU + danh mục + thương hiệu)` (bỏ dấu, đ→d,
+chữ thường) ghi ở tầng ứng dụng; truy vấn `LIKE '%…%'` dùng index GIN `pg_trgm`. Cùng hàm chuẩn hoá dùng ở web.
+
+**Tiền.** `Decimal(14,2)` trong DB; API trả chuỗi `"199000.00"`; web chỉ chuyển sang number để hiển thị.
+
+Thư viện thêm ở Phase 02 (lý do): `exceljs` (đọc/ghi .xlsx, MIT, không phụ thuộc native), `csv-parse`/`csv-stringify`
+(CSV chuẩn RFC 4180), `image-size` (đọc kích thước ảnh từ buffer, thuần JS), `@aws-sdk/s3-request-presigner` (ký URL S3).
+
+## 11. Định hướng (chưa triển khai)
 
 - Module nghiệp vụ trong api: `products`, `scripts`, `assets`, `voices`, `videos`, `schedules`, `integrations/tiktok`.
 - Queue riêng cho từng loại tác vụ: `ingest`, `script`, `image`, `tts`, `render`, `publish` để giới hạn concurrency/rate-limit độc lập.

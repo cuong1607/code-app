@@ -1,6 +1,7 @@
 'use client';
 
-import { CalendarPlus, Link2, Send, Clock } from 'lucide-react';
+import { CalendarPlus, Clock, Link2, Send } from 'lucide-react';
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { PUBLISH_MODES, utcIsoToVnLocalInput } from '@acs/shared';
@@ -21,10 +22,11 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { TIKTOK_ACCOUNTS } from '@/lib/data';
+import { describeError } from '@/lib/api/client';
 import { formatDateTime } from '@/lib/format';
 import { PUBLISH_MODE_LABEL } from '@/lib/labels';
 import { cn } from '@/lib/utils';
+import { hueFromString } from '@/types/domain';
 import {
   INTERVAL_OPTIONS,
   TIKTOK_CAPTION_MAX,
@@ -35,14 +37,13 @@ import type { PublishingState } from './use-publishing';
 
 const intervalLabel = (m: number) => (m < 60 ? `${m} phút` : `${m / 60} giờ`);
 
-function quickStart(offsetMs: number, roundHour = true): string {
-  const d = new Date(Date.now() + offsetMs);
-  if (roundHour) d.setUTCMinutes(0, 0, 0);
+function nextHourVn(): string {
+  const d = new Date(Date.now() + 119 * 60_000);
+  d.setUTCMinutes(0, 0, 0);
   return utcIsoToVnLocalInput(d);
 }
 
 function tomorrowAt8Vn(): string {
-  // 08:00 giờ VN ngày mai = 01:00 UTC
   const nowVn = utcIsoToVnLocalInput(new Date());
   const date = new Date(`${nowVn.slice(0, 10)}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + 1);
@@ -50,7 +51,7 @@ function tomorrowAt8Vn(): string {
 }
 
 export function PublishConfigPanel({ state }: { state: PublishingState }) {
-  const { config, update, hashtags, publishableVideos, videosLoading, createDrafts } = state;
+  const { config, update, hashtags, videos, videosLoading, createDrafts, creating } = state;
   // Lỗi chỉ hiện sau khi bấm "Tạo lịch đăng" (validate trong event handler vì cần Date.now())
   const [errors, setErrors] = useState<string[]>([]);
   const showErrors = errors.length > 0;
@@ -76,12 +77,12 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
         : [...config.videoIds, id],
     );
 
-  const submit = () => {
+  const submit = async () => {
     const validation = validateSchedule({
       mode: config.mode,
       startLocal: config.startLocal,
       videoCount: config.videoIds.length,
-      accountId: config.accountId,
+      requireAccount: false, // chưa có tài khoản TikTok kết nối (Phase 08)
       caption: config.caption,
       hashtags,
       nowMs: Date.now(),
@@ -91,11 +92,16 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
       toast.error('Chưa thể tạo lịch đăng', { description: validation.errors.join('\n') });
       return;
     }
-    const count = createDrafts();
     setErrors([]);
-    toast.success(`Đã tạo ${count} bài đăng nháp`, {
-      description: 'Trạng thái "Chờ kiểm duyệt" – chỉ trên trình duyệt, CHƯA gửi lên TikTok.',
-    });
+    try {
+      const count = await createDrafts();
+      toast.success(`Đã lưu ${count} bài đăng nháp`, {
+        description: 'Trạng thái "Chờ kiểm duyệt" – lưu trong database, CHƯA gửi lên TikTok.',
+      });
+      update('videoIds', []);
+    } catch (error) {
+      toast.error('Không lưu được lịch đăng', { description: describeError(error) });
+    }
   };
 
   return (
@@ -104,18 +110,21 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
         <Field
           label="Tài khoản TikTok"
           htmlFor="pub-account"
-          required
-          badge={<UnavailableChip reason="Kết nối OAuth TikTok – dự kiến Phase 08" label="DEMO" />}
+          badge={
+            <UnavailableChip reason="Kết nối OAuth TikTok – dự kiến Phase 08" label="Phase 08" />
+          }
         >
           <NativeSelect
             id="pub-account"
-            value={config.accountId}
-            onChange={(e) => update('accountId', e.target.value)}
-            placeholder="Chọn tài khoản"
-            options={TIKTOK_ACCOUNTS.map((a) => ({ value: a.id, label: `${a.handle} (demo)` }))}
-            aria-invalid={showErrors && !config.accountId}
+            value=""
+            disabled
+            placeholder="Chưa có tài khoản kết nối"
+            options={[]}
           />
         </Field>
+        <p className="text-muted-foreground -mt-2 text-xs">
+          Bài nháp được lưu chưa gắn kênh; gán kênh khi đã kết nối TikTok.
+        </p>
         <UnavailableButton
           size="sm"
           variant="outline"
@@ -130,13 +139,25 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
               Chọn video <span className="text-danger">*</span>
             </span>
             <Badge variant={config.videoIds.length ? 'default' : 'secondary'} className="tabular">
-              {config.videoIds.length}/{publishableVideos.length}
+              {config.videoIds.length}/{videos.length}
             </Badge>
           </div>
           {videosLoading ? (
             <LoadingState rows={3} />
-          ) : publishableVideos.length === 0 ? (
-            <EmptyState className="py-4" title="Chưa có video hoàn thành" />
+          ) : videos.length === 0 ? (
+            <EmptyState
+              className="py-4"
+              title="Chưa có luồng video"
+              description={
+                <>
+                  Tạo luồng sản xuất ở{' '}
+                  <Link href="/studio/videos" className="text-info underline">
+                    Xưởng video
+                  </Link>{' '}
+                  trước.
+                </>
+              }
+            />
           ) : (
             <ul
               className={cn(
@@ -144,7 +165,7 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
                 showErrors && !config.videoIds.length && 'border-danger',
               )}
             >
-              {publishableVideos.map((v) => {
+              {videos.map((v) => {
                 const checked = config.videoIds.includes(v.id);
                 return (
                   <li key={v.id}>
@@ -160,7 +181,11 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
                         aria-label={`Chọn ${v.name}`}
                       />
                       <MediaPreview
-                        image={v.thumbnail}
+                        image={{
+                          id: v.id,
+                          url: v.images[0]?.previewUrl ?? undefined,
+                          hue: hueFromString(v.id),
+                        }}
                         aspect="9:16"
                         kind="video"
                         className="w-7"
@@ -168,7 +193,7 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
                       <span className="min-w-0 flex-1">
                         <span className="line-clamp-1 text-xs font-medium">{v.name}</span>
                         <span className="text-muted-foreground text-[11px]">
-                          {v.durationSec}s · {v.aspectRatio} · DEMO
+                          {v.config.durationSec}s · {v.config.aspectRatio} · chưa render
                         </span>
                       </span>
                     </label>
@@ -184,9 +209,10 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
               onClick={() =>
                 update(
                   'videoIds',
-                  publishableVideos.map((v) => v.id),
+                  videos.map((v) => v.id),
                 )
               }
+              disabled={!videos.length}
             >
               Chọn tất cả
             </Button>
@@ -252,7 +278,7 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
           </div>
           <div className="flex items-center gap-2">
             <UnavailableChip reason="Gắn giỏ hàng cần tích hợp TikTok Shop – chưa hỗ trợ" />
-            <Switch checked={config.attachCart} disabled aria-label="Gắn giỏ hàng (chưa hỗ trợ)" />
+            <Switch checked={false} disabled aria-label="Gắn giỏ hàng (chưa hỗ trợ)" />
           </div>
         </div>
       </SectionCard>
@@ -288,7 +314,7 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
               <Button
                 size="xs"
                 variant="outline"
-                onClick={() => update('startLocal', quickStart(60 * 60_000 + 59 * 60_000))}
+                onClick={() => update('startLocal', nextHourVn())}
               >
                 <Clock /> Giờ tới
               </Button>
@@ -332,8 +358,8 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
         ) : (
           <p className="text-muted-foreground text-xs">
             {config.mode === 'immediate'
-              ? 'Bài sẽ vào hàng chờ kiểm duyệt; đăng ngay sau khi duyệt (khi có backend).'
-              : 'Video sẽ được gửi vào mục nháp của TikTok để bạn tự đăng (khi có backend).'}
+              ? 'Bài vào hàng chờ kiểm duyệt; đăng ngay sau khi duyệt (khi có tích hợp TikTok).'
+              : 'Video sẽ được gửi vào mục nháp của TikTok để bạn tự đăng (khi có tích hợp TikTok).'}
           </p>
         )}
       </SectionCard>
@@ -346,8 +372,8 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
             ))}
           </ul>
         ) : null}
-        <Button onClick={submit}>
-          <CalendarPlus /> Tạo lịch đăng ({config.videoIds.length})
+        <Button onClick={() => void submit()} disabled={creating}>
+          <CalendarPlus /> {creating ? 'Đang lưu…' : `Tạo lịch đăng (${config.videoIds.length})`}
         </Button>
         <UnavailableButton
           variant="dark"
@@ -356,7 +382,7 @@ export function PublishConfigPanel({ state }: { state: PublishingState }) {
           <Send /> Gửi lên TikTok
         </UnavailableButton>
         <p className="text-muted-foreground text-center text-[11px]">
-          Lịch tạo ở Phase 01 là nháp cục bộ, chưa đăng thật.
+          Lịch đăng được lưu nháp trong database, chưa đăng thật.
         </p>
       </div>
     </div>

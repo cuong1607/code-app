@@ -1,7 +1,8 @@
 'use client';
 
 import { Clapperboard } from 'lucide-react';
-import { DemoBadge, DemoNotice } from '@/components/common';
+import { useSearchParams } from 'next/navigation';
+import { DemoNotice } from '@/components/common';
 import { BatchSection } from './batch-section';
 import { ConfigSection } from './config-section';
 import { FactoryTable } from './factory-table';
@@ -12,9 +13,12 @@ import { useVideoFactory } from './use-video-factory';
 /**
  * XƯỞNG VIDEO (Video Factory)
  * Bố cục: panel cấu hình ~25% (cuộn độc lập) | bảng tác vụ ~75%.
+ * Phase 02: luồng sản xuất được LƯU DATABASE dưới dạng nháp; render ở Phase 06/07.
  */
 export function VideoFactoryView() {
-  const state = useVideoFactory();
+  const params = useSearchParams();
+  const initial = (params.get('products') ?? '').split(',').filter(Boolean);
+  const state = useVideoFactory(initial);
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:h-[calc(100dvh-var(--topbar-height))] lg:overflow-hidden">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -27,11 +31,12 @@ export function VideoFactoryView() {
             <p className="text-muted-foreground text-xs">Sản xuất video sản phẩm hàng loạt</p>
           </div>
         </div>
-        <DemoBadge />
-        <DemoNotice className="w-full py-2 text-xs lg:ml-auto lg:w-auto lg:max-w-[52rem]">
-          Bảng hiển thị tác vụ <strong>DEMO</strong> (không có video thật). &quot;Tạo luồng sản
-          xuất&quot; chỉ tạo
-          <strong> luồng nháp trên trình duyệt</strong>; chạy/tạm dừng/dừng cần backend ở Phase 07.
+        <DemoNotice
+          tone="info"
+          className="w-full py-2 text-xs lg:ml-auto lg:w-auto lg:max-w-[52rem]"
+        >
+          &quot;Tạo luồng sản xuất&quot; <strong>lưu luồng nháp vào database</strong> (trạng thái
+          Chờ xử lý). Chưa có worker render: chạy/tạm dừng/dừng sẽ hoạt động ở Phase 07.
         </DemoNotice>
       </div>
 

@@ -21,7 +21,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { useAsync } from '@/hooks/use-async';
 import { useSelection } from '@/hooks/use-selection';
 import { AI_PROVIDER_PLACEHOLDERS, IMAGE_TEMPLATES, productRepository } from '@/lib/data';
-import type { ImageRef } from '@/types/domain';
+import { type ImageRef, assetToImageRef, hueFromString } from '@/types/domain';
 import { cn } from '@/lib/utils';
 import { ImageViewerDialog } from './image-viewer-dialog';
 
@@ -42,7 +42,8 @@ export function ImageStudioView() {
   const selection = useSelection();
 
   const product = products.data?.find((p) => p.id === productId);
-  const original = references[0] ?? product?.images[0];
+  const productImage = product?.primaryImage ? assetToImageRef(product.primaryImage) : undefined;
+  const original = references[0] ?? productImage;
   const template = IMAGE_TEMPLATES.find((t) => t.id === templateId)!;
 
   const showDemoLayout = () => {
@@ -50,7 +51,7 @@ export function ImageStudioView() {
     setResults(
       Array.from({ length: count }, (_, i) => ({
         id: `demo-gen-${templateId}-${aspect}-${i}`,
-        hue: ((product?.images[0]?.hue ?? 30) + i * 45) % 360,
+        hue: ((product ? hueFromString(product.id) : 30) + i * 45) % 360,
         label: `Khung mẫu ${i + 1} · ${template.name}`,
       })),
     );
@@ -83,9 +84,17 @@ export function ImageStudioView() {
             </Field>
             {product ? (
               <div className="flex flex-wrap gap-1.5">
-                {product.images.map((img) => (
-                  <MediaPreview key={img.id} image={img} className="size-12 border" />
-                ))}
+                {productImage ? (
+                  <MediaPreview
+                    image={productImage}
+                    className="size-12 border"
+                    alt={product.name}
+                  />
+                ) : (
+                  <span className="text-muted-foreground text-xs">
+                    Sản phẩm chưa có ảnh đại diện
+                  </span>
+                )}
               </div>
             ) : null}
             <FileUpload

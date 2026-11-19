@@ -1,10 +1,18 @@
 import { formatDate } from '@/lib/format';
 
 /** Biểu đồ cột SVG thuần (không thêm thư viện) + bảng ẩn cho trình đọc màn hình. */
-export function VideosPerDayChart({ data }: { data: { date: string; count: number }[] }) {
+export function VideosPerDayChart({
+  data,
+  label = 'Số video theo ngày',
+  unit = 'video',
+}: {
+  data: { date: string; count: number }[];
+  label?: string;
+  unit?: string;
+}) {
   const max = Math.max(1, ...data.map((d) => d.count));
   const niceMax = Math.ceil(max / 5) * 5;
-  const ticks = [0, niceMax / 2, niceMax];
+  const ticks = niceMax <= 5 ? [0, niceMax] : [0, niceMax / 2, niceMax];
   const width = 640;
   const height = 220;
   const pad = { top: 12, right: 8, bottom: 26, left: 30 };
@@ -19,7 +27,7 @@ export function VideosPerDayChart({ data }: { data: { date: string; count: numbe
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full"
         role="img"
-        aria-label="Số video theo ngày"
+        aria-label={label}
       >
         {ticks.map((t) => {
           const y = pad.top + innerH - (t / niceMax) * innerH;
@@ -61,7 +69,7 @@ export function VideosPerDayChart({ data }: { data: { date: string; count: numbe
                   isLast ? 'fill-primary' : 'fill-primary/45 hover:fill-primary transition-colors'
                 }
               >
-                <title>{`${formatDate(d.date)}: ${d.count} video`}</title>
+                <title>{`${formatDate(d.date)}: ${d.count} ${unit}`}</title>
               </rect>
               {i % 2 === data.length % 2 || isLast ? (
                 <text
@@ -78,7 +86,7 @@ export function VideosPerDayChart({ data }: { data: { date: string; count: numbe
         })}
       </svg>
       <table className="sr-only">
-        <caption>Số video theo ngày</caption>
+        <caption>{label}</caption>
         <tbody>
           {data.map((d) => (
             <tr key={d.date}>

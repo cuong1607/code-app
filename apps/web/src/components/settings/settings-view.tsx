@@ -9,15 +9,20 @@ import {
   Layers,
   Mic,
   Music2,
-  Save,
   Settings,
   SlidersHorizontal,
   Wallet,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { DemoNotice, PageHeader, UnavailableButton } from '@/components/common';
-import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Tabs as TabsPrimitive } from 'radix-ui';
+import { useState } from 'react';
+import { toast } from 'sonner';
+import type { AppSettings, AppSettingsUpdate } from '@acs/shared';
+import { DemoNotice, ErrorState, LoadingState, PageHeader } from '@/components/common';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { useAsync } from '@/hooks/use-async';
+import { describeError } from '@/lib/api/client';
+import { settingsRepository } from '@/lib/data';
 import { cn } from '@/lib/utils';
 import {
   AccountSettings,
@@ -106,6 +111,8 @@ const GROUPS = [
 ] as const;
 
 type GroupId = (typeof GROUPS)[number]['id'];
+/** Nhóm có lưu vào database (cài đặt KHÔNG nhạy cảm). Các nhóm còn lại cấu hình ở server/phase sau. */
+const SAVEABLE = new Set<GroupId>(['general', 'voices', 'video', 'storage', 'batch', 'cost']);
 
 export function SettingsView() {
   const router = useRouter();
@@ -114,6 +121,19 @@ export function SettingsView() {
   const active: GroupId = GROUPS.some((g) => g.id === requested)
     ? (requested as GroupId)
     : 'general';
+  const query = useAsync(() => settingsRepository.get(), []);
+  const [saved, setSaved] = useState<AppSettings>();
+  const settings = saved ?? query.data;
+
+  const onSave = async (patch: AppSettingsUpdate) => {
+    try {
+      setSaved(await settingsRepository.update(patch));
+      toast.success('Đã lưu cài đặt vào database');
+    } catch (error) {
+      toast.error('Không lưu được cài đặt', { description: describeError(error) });
+      throw error;
+    }
+  };
 
   return (
     <>
@@ -123,8 +143,9 @@ export function SettingsView() {
         description="Cấu hình workspace, nhà cung cấp AI, mặc định sản xuất và tích hợp."
       />
       <DemoNotice tone="info">
-        Phase 01 chưa có API lưu cài đặt: các thay đổi <strong>không được lưu</strong>. API key thật
-        chỉ được cấu hình ở server (biến môi trường), không bao giờ lưu ở trình duyệt.
+        Cài đặt chung, video, giọng đọc, batch, chi phí và storage được{' '}
+        <strong>lưu vào database</strong>. API key và thông tin bí mật chỉ cấu hình ở server (biến
+        môi trường) – không bao giờ lưu ở trình duyệt hay database.
       </DemoNotice>
 
       <Tabs
@@ -163,12 +184,22 @@ export function SettingsView() {
                 <h2 className="font-semibold">{label}</h2>
                 <p className="text-muted-foreground text-xs">{desc}</p>
               </div>
-              <UnavailableButton size="sm" reason="Lưu cài đặt cần API settings – dự kiến Phase 02">
-                <Save /> Lưu thay đổi
-              </UnavailableButton>
+              {!SAVEABLE.has(id) ? (
+                <span className="text-muted-foreground text-xs">Không lưu ở giao diện</span>
+              ) : null}
             </div>
             <form className="p-4 sm:p-5" onSubmit={(e) => e.preventDefault()} autoComplete="off">
-              <Render />
+              {SAVEABLE.has(id) ? (
+                query.error && !settings ? (
+                  <ErrorState message={query.error} onRetry={query.reload} />
+                ) : !settings ? (
+                  <LoadingState variant="block" />
+                ) : (
+                  <Render settings={settings} onSave={onSave} />
+                )
+              ) : (
+                <Render settings={settings!} onSave={onSave} />
+              )}
             </form>
           </TabsContent>
         ))}

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AppError, type ErrorCode, type ErrorResponse, nowUtcIso } from '@acs/shared';
+import { isDbUnavailable } from './prisma-errors';
 
 const STATUS_TO_CODE: Record<number, ErrorCode> = {
   400: 'BAD_REQUEST',
@@ -15,6 +16,7 @@ const STATUS_TO_CODE: Record<number, ErrorCode> = {
   403: 'FORBIDDEN',
   404: 'NOT_FOUND',
   409: 'CONFLICT',
+  413: 'PAYLOAD_TOO_LARGE',
   422: 'VALIDATION_ERROR',
   429: 'RATE_LIMITED',
   503: 'SERVICE_UNAVAILABLE',
@@ -27,6 +29,7 @@ const CODE_TO_STATUS: Record<ErrorCode, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  PAYLOAD_TOO_LARGE: 413,
   RATE_LIMITED: 429,
   SERVICE_UNAVAILABLE: 503,
   PROVIDER_NOT_CONFIGURED: 503,
@@ -68,6 +71,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : typeof body === 'object' && body !== null && 'message' in body
             ? String((body as { message: unknown }).message)
             : exception.message;
+      // Thông điệp tiếng Việt cho các lỗi thường gặp do framework/multer sinh ra
+      if (status === 413) message = 'Dữ liệu hoặc file gửi lên vượt quá dung lượng cho phép';
+      if (status === 404 && /^Cannot \w+ /.test(message)) message = 'Không tìm thấy đường dẫn API';
+    } else if (isDbUnavailable(exception)) {
+      status = 503;
+      code = 'SERVICE_UNAVAILABLE';
+      message = 'Không kết nối được cơ sở dữ liệu. Vui lòng thử lại sau.';
     }
 
     if (status >= 500) {

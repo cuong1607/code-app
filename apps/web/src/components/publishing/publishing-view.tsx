@@ -1,7 +1,7 @@
 'use client';
 
 import { CalendarClock } from 'lucide-react';
-import { DemoBadge, DemoNotice } from '@/components/common';
+import { DemoNotice } from '@/components/common';
 import { PublishConfigPanel } from './publish-config-panel';
 import { PublishTable } from './publish-table';
 import { usePublishing } from './use-publishing';
@@ -23,11 +23,13 @@ export function PublishingView() {
             </p>
           </div>
         </div>
-        <DemoBadge />
-        <DemoNotice className="w-full py-2 text-xs lg:ml-auto lg:w-auto lg:max-w-[52rem]">
-          Chưa kết nối TikTok: tài khoản và bài đăng là <strong>DEMO</strong>. &quot;Tạo lịch
-          đăng&quot; chỉ tạo
-          <strong> bài nháp trên trình duyệt</strong>, không có bài nào được đăng thật.
+        <DemoNotice
+          tone="info"
+          className="w-full py-2 text-xs lg:ml-auto lg:w-auto lg:max-w-[52rem]"
+        >
+          Chưa kết nối TikTok (Phase 08). &quot;Tạo lịch đăng&quot;{' '}
+          <strong>lưu bài nháp vào database</strong> ở trạng thái Chờ kiểm duyệt – không có bài nào
+          được đăng thật.
         </DemoNotice>
       </div>
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(300px,25%)_minmax(0,1fr)]">

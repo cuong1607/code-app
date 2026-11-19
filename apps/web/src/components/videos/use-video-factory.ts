@@ -1,16 +1,19 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Product, VideoDraftInput } from '@acs/shared';
 import { useAsync } from '@/hooks/use-async';
+import { describeError } from '@/lib/api/client';
 import {
   DEFAULT_VIDEO_PROMPT,
   VIDEO_PROMPT_TEMPLATES,
   VIDEO_TEMPLATES,
   VOICES,
-  videoJobRepository,
+  productRepository,
+  videoDraftRepository,
 } from '@/lib/data';
-import type { ImageRef, Product, VideoJob } from '@/types/domain';
-import type { FactoryConfig, SelectedProduct } from './factory-types';
+import { formatMoney } from '@/lib/format';
+import type { FactoryConfig, ReferenceImage, SelectedProduct } from './factory-types';
 
 const DEFAULT_TEMPLATE = VIDEO_PROMPT_TEMPLATES.find((t) => t.content === DEFAULT_VIDEO_PROMPT)!;
 
@@ -28,33 +31,100 @@ export const DEFAULT_CONFIG: FactoryConfig = {
   versionsPerProduct: 2,
 };
 
+/** Điền biến trong prompt bằng dữ liệu sản phẩm thật. */
+export function renderPrompt(template: string, product: Product, durationSec: number): string {
+  return template
+    .replaceAll('{product}', product.name)
+    .replaceAll('{price}', formatMoney(product.sellingPrice, product.currency))
+    .replaceAll('{duration}', String(durationSec))
+    .replaceAll('{category}', product.category);
+}
+
+function batchKeyNow(): string {
+  const d = new Date(Date.now() + 7 * 3600_000).toISOString(); // giờ VN cho dễ đọc
+  return `batch-${d.slice(0, 10).replaceAll('-', '')}-${d.slice(11, 16).replace(':', '')}`;
+}
+
 /**
  * State của Video Factory.
- * - Tác vụ DEMO lấy từ repository (chỉ đọc).
- * - "Tạo luồng sản xuất" sinh các dòng NHÁP CỤC BỘ (chưa gửi backend, chưa chạy).
+ * - Luồng sản xuất là BẢN NHÁP LƯU TRONG POSTGRESQL (API /drafts/video). Chưa render (Phase 06/07).
+ * - Sản phẩm & ảnh lấy từ API thật.
  */
-export function useVideoFactory() {
+export function useVideoFactory(initialProductIds: string[] = []) {
   const [config, setConfig] = useState<FactoryConfig>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<SelectedProduct[]>([]);
-  const [drafts, setDrafts] = useState<VideoJob[]>([]);
-  const jobsQuery = useAsync(() => videoJobRepository.list(), []);
+  const drafts = useAsync(() => videoDraftRepository.list(), []);
+  const [creating, setCreating] = useState(false);
 
   const update = useCallback(<K extends keyof FactoryConfig>(key: K, value: FactoryConfig[K]) => {
     setConfig((c) => ({ ...c, [key]: value }));
   }, []);
 
-  const setProducts = useCallback((products: Product[]) => {
-    setSelected((prev) =>
-      products.map(
-        (product) =>
-          prev.find((s) => s.product.id === product.id) ?? {
-            product,
-            images: product.images.slice(0, 4),
-            primaryImageId: (product.images.find((i) => i.isPrimary) ?? product.images[0])?.id,
-          },
-      ),
-    );
+  /** Nạp ảnh thật của sản phẩm (trang chi tiết) cho các sản phẩm vừa chọn. */
+  const loadImages = useCallback(async (products: Product[]) => {
+    for (const product of products) {
+      try {
+        const detail = await productRepository.get(product.id);
+        const images: ReferenceImage[] = detail.media.map((m) => ({
+          id: m.mediaAssetId,
+          previewUrl: m.asset.previewUrl,
+          filename: m.asset.filename,
+        }));
+        const primary = detail.media.find((m) => m.isPrimary)?.mediaAssetId ?? images[0]?.id;
+        setSelected((prev) =>
+          prev.map((s) =>
+            s.product.id === product.id
+              ? { ...s, images: images.slice(0, 8), primaryImageId: primary, loadingImages: false }
+              : s,
+          ),
+        );
+      } catch {
+        setSelected((prev) =>
+          prev.map((s) => (s.product.id === product.id ? { ...s, loadingImages: false } : s)),
+        );
+      }
+    }
   }, []);
+
+  // Bản sao mới nhất của `selected` để tính sản phẩm mới mà không gây side effect trong updater
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  const setProducts = useCallback(
+    (products: Product[]) => {
+      const fresh = products.filter((p) => !selectedRef.current.some((s) => s.product.id === p.id));
+      setSelected((prev) =>
+        products.map(
+          (product) =>
+            prev.find((s) => s.product.id === product.id) ?? {
+              product,
+              images: [],
+              loadingImages: true,
+            },
+        ),
+      );
+      void loadImages(fresh);
+    },
+    [loadImages],
+  );
+
+  // Chọn sẵn sản phẩm khi đi từ trang Sản phẩm (?products=id1,id2)
+  const initialRef = useRef(initialProductIds);
+  useEffect(() => {
+    const ids = initialRef.current;
+    if (!ids.length) return;
+    let active = true;
+    Promise.allSettled(ids.slice(0, 50).map((id) => productRepository.get(id))).then((results) => {
+      if (!active) return;
+      const products = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+      if (products.length) setProducts(products);
+    });
+    return () => {
+      active = false;
+    };
+  }, [setProducts]);
 
   const removeProduct = useCallback((productId: string) => {
     setSelected((prev) => prev.filter((s) => s.product.id !== productId));
@@ -80,13 +150,13 @@ export function useVideoFactory() {
     );
   }, []);
 
-  const addImages = useCallback((productId: string, images: ImageRef[]) => {
+  const addImages = useCallback((productId: string, images: ReferenceImage[]) => {
     setSelected((prev) =>
       prev.map((s) =>
         s.product.id === productId
           ? {
               ...s,
-              images: [...s.images, ...images],
+              images: [...s.images, ...images.filter((i) => !s.images.some((x) => x.id === i.id))],
               primaryImageId: s.primaryImageId ?? images[0]?.id,
             }
           : s,
@@ -96,55 +166,53 @@ export function useVideoFactory() {
 
   const totalVideos = selected.length * config.versionsPerProduct;
 
-  /** Tạo các dòng nháp cục bộ – KHÔNG gửi lên server, KHÔNG chạy. */
-  const createDrafts = useCallback((): number => {
-    const batchId = `local-batch-${Date.now()}`;
-    const now = new Date().toISOString();
-    const created: VideoJob[] = selected.flatMap(({ product, images, primaryImageId }) => {
+  /** Lưu các luồng sản xuất NHÁP vào database (chưa chạy). Trả về số luồng đã tạo. */
+  const createDrafts = useCallback(async (): Promise<number> => {
+    const batchKey = batchKeyNow();
+    const inputs: VideoDraftInput[] = selected.flatMap(({ product, images, primaryImageId }) => {
       const ordered = [...images].sort(
         (a, b) => Number(b.id === primaryImageId) - Number(a.id === primaryImageId),
       );
       return Array.from({ length: config.versionsPerProduct }, (_, v) => ({
-        id: `local-job-${crypto.randomUUID()}`,
-        name: `Nháp · ${product.name} · bản ${v + 1}`,
-        batchId,
+        name: `${product.name} · bản ${v + 1}`,
+        batchKey,
         productId: product.id,
-        productName: product.name,
-        prompt: config.prompt
-          .replaceAll('{product}', product.name)
-          .replaceAll('{duration}', String(config.durationSec)),
-        images: ordered,
-        aspectRatio: config.aspectRatio,
-        durationSec: config.durationSec,
-        quality: config.quality,
-        mode: config.mode,
-        voiceId: config.voiceId,
-        templateId: config.templateId,
-        status: 'queued' as const,
-        progress: 0,
-        createdAt: now,
-        updatedAt: now,
-        isDemo: false,
-        isLocalDraft: true,
+        prompt: renderPrompt(config.prompt, product, config.durationSec),
+        config: {
+          aspectRatio: config.aspectRatio,
+          durationSec: config.durationSec,
+          quality: config.quality,
+          mode: config.mode,
+          voiceId: config.voiceId,
+          templateId: config.templateId,
+        },
+        mediaAssetIds: ordered.map((i) => i.id),
       }));
     });
-    setDrafts((prev) => [...created, ...prev]);
-    return created.length;
-  }, [selected, config]);
+    setCreating(true);
+    try {
+      const created = await videoDraftRepository.create(inputs);
+      drafts.reload();
+      return created.length;
+    } catch (error) {
+      throw new Error(describeError(error));
+    } finally {
+      setCreating(false);
+    }
+  }, [selected, config, drafts]);
 
-  const removeDrafts = useCallback((ids: readonly string[]) => {
-    const set = new Set(ids);
-    setDrafts((prev) => prev.filter((d) => !set.has(d.id)));
-  }, []);
-
-  const jobs = useMemo(
-    () => [...drafts, ...(jobsQuery.data?.items ?? [])],
-    [drafts, jobsQuery.data],
+  const removeDrafts = useCallback(
+    async (ids: readonly string[]) => {
+      await videoDraftRepository.removeMany([...ids]);
+      drafts.reload();
+    },
+    [drafts],
   );
 
   return {
     config,
     update,
+    setConfig,
     resetPrompt: () =>
       setConfig((c) => ({
         ...c,
@@ -159,13 +227,13 @@ export function useVideoFactory() {
     removeImage,
     addImages,
     totalVideos,
+    creating,
     createDrafts,
     removeDrafts,
-    drafts,
-    jobs,
-    jobsLoading: jobsQuery.loading,
-    jobsError: jobsQuery.error,
-    reloadJobs: jobsQuery.reload,
+    drafts: drafts.data ?? [],
+    draftsLoading: drafts.loading && !drafts.data,
+    draftsError: drafts.error,
+    reloadDrafts: drafts.reload,
   };
 }
 

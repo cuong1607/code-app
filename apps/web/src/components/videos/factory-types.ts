@@ -1,5 +1,4 @@
-import type { AspectRatio, VideoDuration, VideoMode, VideoQuality } from '@acs/shared';
-import type { ImageRef, Product } from '@/types/domain';
+import type { AspectRatio, Product, VideoDuration, VideoMode, VideoQuality } from '@acs/shared';
 
 /** Cấu hình batch đang soạn ở panel trái. */
 export interface FactoryConfig {
@@ -16,11 +15,19 @@ export interface FactoryConfig {
   versionsPerProduct: number;
 }
 
-/** Sản phẩm đã chọn vào batch + ảnh tham chiếu đã chọn. */
+/** Ảnh tham chiếu (tài nguyên thật trong thư viện). */
+export interface ReferenceImage {
+  id: string;
+  previewUrl: string | null;
+  filename: string;
+}
+
+/** Sản phẩm đã chọn vào batch + ảnh tham chiếu. */
 export interface SelectedProduct {
   product: Product;
-  images: ImageRef[];
+  images: ReferenceImage[];
   primaryImageId?: string;
+  loadingImages?: boolean;
 }
 
 export const PROMPT_VARIABLES = [

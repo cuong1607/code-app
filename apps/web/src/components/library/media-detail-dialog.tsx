@@ -1,7 +1,10 @@
 'use client';
 
 import { Download, Trash2 } from 'lucide-react';
-import { DemoBadge, MediaPreview, UnavailableButton, VideoPreview } from '@/components/common';
+import { useState } from 'react';
+import { toast } from 'sonner';
+import type { MediaAsset } from '@acs/shared';
+import { MediaPreview } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,9 +15,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { formatBytes, formatDateTime, formatDuration } from '@/lib/format';
-import { MEDIA_KIND_LABEL } from '@/lib/labels';
-import type { MediaAsset } from '@/types/domain';
+import { describeError } from '@/lib/api/client';
+import { mediaRepository } from '@/lib/data';
+import { formatBytes, formatDateTime } from '@/lib/format';
+import { MEDIA_KIND_LABEL, MEDIA_SOURCE_LABEL } from '@/lib/labels';
+import { assetToImageRef } from '@/types/domain';
+
+/** Tải file thật: xin URL tải xuống (presigned, có tên file) rồi điều hướng trình duyệt tới đó. */
+export async function downloadAsset(asset: Pick<MediaAsset, 'id' | 'filename'>) {
+  try {
+    const { url } = await mediaRepository.downloadUrl(asset.id);
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (error) {
+    toast.error(`Không tải được "${asset.filename}"`, { description: describeError(error) });
+  }
+}
 
 export function MediaDetailDialog({
   asset,
@@ -25,39 +45,33 @@ export function MediaDetailDialog({
   onOpenChange: (open: boolean) => void;
   onDelete: (asset: MediaAsset) => void;
 }) {
+  const [downloading, setDownloading] = useState(false);
   return (
     <Dialog open={Boolean(asset)} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
         {asset ? (
           <>
             <DialogHeader>
-              <div className="flex flex-wrap items-center gap-2">
-                <DialogTitle className="break-all">{asset.name}</DialogTitle>
-                <DemoBadge />
-              </div>
-              <DialogDescription>{MEDIA_KIND_LABEL[asset.kind]}</DialogDescription>
+              <DialogTitle className="break-all">{asset.filename}</DialogTitle>
+              <DialogDescription>{MEDIA_KIND_LABEL[asset.assetType]}</DialogDescription>
             </DialogHeader>
             <DialogBody>
-              <div className="grid gap-5 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
-                {asset.kind === 'video' ? (
-                  <VideoPreview
-                    poster={asset.preview}
-                    emptyMessage="DEMO – không có file video thật"
-                    className="mx-auto max-w-56"
-                  />
-                ) : (
-                  <MediaPreview
-                    image={asset.preview}
-                    kind={asset.kind === 'audio' ? 'audio' : 'image'}
-                    aspect={asset.kind === 'thumbnail' ? '9:16' : '1:1'}
-                    className="bg-checker mx-auto w-full max-w-56 rounded-lg border"
-                  />
-                )}
+              <div className="grid gap-5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+                <MediaPreview
+                  image={assetToImageRef(asset)}
+                  aspect={
+                    asset.width && asset.height && asset.height > asset.width * 1.3 ? '9:16' : '1:1'
+                  }
+                  className="bg-checker mx-auto w-full max-w-60 rounded-lg border"
+                  alt={asset.filename}
+                />
                 <dl className="grid grid-cols-[7.5rem_1fr] content-start gap-x-3 gap-y-2.5 text-sm">
+                  <dt className="text-muted-foreground">Tên gốc</dt>
+                  <dd className="break-all">{asset.originalFilename}</dd>
                   <dt className="text-muted-foreground">Loại file</dt>
                   <dd className="font-mono text-xs">{asset.mimeType}</dd>
                   <dt className="text-muted-foreground">Dung lượng</dt>
-                  <dd className="tabular">{formatBytes(asset.sizeBytes)}</dd>
+                  <dd className="tabular">{formatBytes(asset.fileSize)}</dd>
                   {asset.width ? (
                     <>
                       <dt className="text-muted-foreground">Kích thước</dt>
@@ -66,18 +80,16 @@ export function MediaDetailDialog({
                       </dd>
                     </>
                   ) : null}
-                  {asset.durationSec ? (
-                    <>
-                      <dt className="text-muted-foreground">Thời lượng</dt>
-                      <dd className="tabular">{formatDuration(asset.durationSec)}</dd>
-                    </>
-                  ) : null}
+                  <dt className="text-muted-foreground">Nguồn</dt>
+                  <dd>{MEDIA_SOURCE_LABEL[asset.sourceType]}</dd>
+                  <dt className="text-muted-foreground">Dùng bởi</dt>
+                  <dd>{asset.linkedProductCount} sản phẩm</dd>
+                  <dt className="text-muted-foreground">SHA-256</dt>
+                  <dd className="truncate font-mono text-[11px]" title={asset.sha256}>
+                    {asset.sha256}
+                  </dd>
                   <dt className="text-muted-foreground">Ngày tạo</dt>
                   <dd className="tabular">{formatDateTime(asset.createdAt)}</dd>
-                  <dt className="text-muted-foreground">Lưu trữ</dt>
-                  <dd className="text-muted-foreground text-xs">
-                    Dữ liệu DEMO – chưa có file trong MinIO
-                  </dd>
                 </dl>
               </div>
             </DialogBody>
@@ -89,12 +101,17 @@ export function MediaDetailDialog({
               >
                 <Trash2 /> Xoá
               </Button>
-              <UnavailableButton
+              <Button
                 variant="outline"
-                reason="Tải xuống cần presigned URL từ storage API – dự kiến Phase 02"
+                disabled={downloading}
+                onClick={async () => {
+                  setDownloading(true);
+                  await downloadAsset(asset);
+                  setDownloading(false);
+                }}
               >
-                <Download /> Tải xuống
-              </UnavailableButton>
+                <Download /> {downloading ? 'Đang chuẩn bị…' : 'Tải xuống'}
+              </Button>
               <Button onClick={() => onOpenChange(false)}>Đóng</Button>
             </DialogFooter>
           </>

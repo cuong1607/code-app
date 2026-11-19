@@ -21,6 +21,7 @@
     "lint": "pnpm build:packages && pnpm -r lint",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r test",
+    "test:integration": "pnpm build:packages && pnpm --filter @acs/api test:integration",
     "test:e2e": "pnpm --filter @acs/web build && pnpm --filter @acs/web test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -35,6 +36,7 @@
     "db:deploy": "pnpm --filter @acs/api prisma:deploy",
     "db:studio": "pnpm --filter @acs/api prisma:studio",
     "db:validate": "pnpm --filter @acs/api prisma:validate",
+    "db:seed": "pnpm --filter @acs/api prisma:seed",
     "health": "node scripts/check-health.mjs"
   },
   "devDependencies": {

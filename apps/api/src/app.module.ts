@@ -6,7 +6,13 @@ import {
 } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { type ApiEnv } from '@acs/shared';
+import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { DraftsModule } from './drafts/drafts.module';
+import { MediaModule } from './media/media.module';
+import { ProductsModule } from './products/products.module';
+import { SettingsModule } from './settings/settings.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
@@ -27,6 +33,12 @@ export class AppModule implements NestModule {
         StorageModule,
         QueueModule,
         HealthModule,
+        AuthModule,
+        MediaModule,
+        ProductsModule,
+        DraftsModule,
+        SettingsModule,
+        DashboardModule,
       ],
       providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
     };

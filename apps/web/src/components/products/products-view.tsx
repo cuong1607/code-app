@@ -1,9 +1,10 @@
 'use client';
 
 import {
+  Clapperboard,
+  Download,
   Eye,
   FileSpreadsheet,
-  Link2,
   MoreHorizontal,
   Package,
   Pencil,
@@ -11,17 +12,22 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
-import { PRODUCT_STATUSES, type ProductStatus } from '@acs/shared';
+import {
+  PRODUCT_STATUSES,
+  type Product,
+  type ProductSortKey,
+  type ProductStatus,
+} from '@acs/shared';
 import {
   ConfirmDialog,
   DataTable,
   type DataTableColumn,
   type DataTableSort,
   DemoBadge,
-  DemoNotice,
   EmptyState,
   FilterBar,
   MediaPreview,
@@ -29,7 +35,6 @@ import {
   Pagination,
   SearchInput,
   StatusBadge,
-  UnavailableButton,
 } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,20 +48,21 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { useAsync } from '@/hooks/use-async';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useSelection } from '@/hooks/use-selection';
-import { CATEGORIES, type ProductSortKey, categoryName, productRepository } from '@/lib/data';
-import { formatDateTime, formatVnd } from '@/lib/format';
+import { describeError } from '@/lib/api/client';
+import { productRepository } from '@/lib/data';
+import { formatDateTime, formatMoney } from '@/lib/format';
 import { PRODUCT_STATUS_META } from '@/lib/labels';
-import type { Product } from '@/types/domain';
-import { ProductDetailDialog } from './product-detail-dialog';
-import { ProductFormDialog, type ProductFormResult } from './product-form-dialog';
+import { hueFromString } from '@/types/domain';
+import { ImportDialog } from './import-dialog';
+import { ProductFormDialog } from './product-form-dialog';
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'createdAt:desc', label: 'Mới nhất' },
   { value: 'createdAt:asc', label: 'Cũ nhất' },
+  { value: 'updatedAt:desc', label: 'Cập nhật gần đây' },
   { value: 'name:asc', label: 'Tên A → Z' },
-  { value: 'price:desc', label: 'Giá cao → thấp' },
-  { value: 'price:asc', label: 'Giá thấp → cao' },
-  { value: 'imageCount:desc', label: 'Nhiều ảnh nhất' },
+  { value: 'sellingPrice:desc', label: 'Giá cao → thấp' },
+  { value: 'sellingPrice:asc', label: 'Giá thấp → cao' },
 ];
 
 export function ProductsView() {
@@ -64,48 +70,40 @@ export function ProductsView() {
   const searchParams = useSearchParams();
 
   const [search, setSearch] = useState('');
-  const [categoryId, setCategoryId] = useState('');
+  const [category, setCategory] = useState('');
   const [status, setStatus] = useState<ProductStatus | ''>('');
   const [sort, setSort] = useState<DataTableSort>({ key: 'createdAt', dir: 'desc' });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const debounced = useDebouncedValue(search);
 
-  // Bản nháp cục bộ (Phase 01 chưa có backend) – chỉ tồn tại trong phiên trình duyệt
-  const [drafts, setDrafts] = useState<Product[]>([]);
-  const [edits, setEdits] = useState<Record<string, Product>>({});
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-
   const [formOpen, setFormOpen] = useState(searchParams.get('action') === 'new');
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<Product>();
-  const [viewing, setViewing] = useState<Product>();
-  const [confirmIds, setConfirmIds] = useState<string[]>([]);
+  const [confirm, setConfirm] = useState<Product[]>([]);
+  const [deleting, setDeleting] = useState(false);
   const selection = useSelection();
 
   const list = useAsync(
     () =>
       productRepository.list({
-        search: debounced,
-        categoryId,
-        status,
+        search: debounced || undefined,
+        category: category || undefined,
+        status: status || undefined,
         sortBy: sort.key as ProductSortKey,
         sortDir: sort.dir,
         page,
         pageSize,
       }),
-    [debounced, categoryId, status, sort.key, sort.dir, page, pageSize],
+    [debounced, category, status, sort.key, sort.dir, page, pageSize],
   );
+  const categories = useAsync(() => productRepository.categories(), [list.data?.total]);
+  const rows = list.data?.items ?? [];
+  const filtersActive = Boolean(search || category || status);
 
-  const rows = useMemo(() => {
-    const base = (list.data?.items ?? []).map((p) => edits[p.id] ?? p);
-    const top = page === 1 ? drafts : [];
-    return [...top, ...base].filter((p) => !hidden.has(p.id));
-  }, [list.data, edits, drafts, hidden, page]);
-
-  const filtersActive = Boolean(search || categoryId || status);
   const resetFilters = () => {
     setSearch('');
-    setCategoryId('');
+    setCategory('');
     setStatus('');
     setPage(1);
   };
@@ -118,46 +116,28 @@ export function ProductsView() {
     }
   };
 
-  const handleSubmit = ({ input, images }: ProductFormResult) => {
-    if (editing) {
-      const updated: Product = {
-        ...editing,
-        name: input.name,
-        sku: input.sku,
-        categoryId: input.category,
-        price: input.price,
-        status: input.status,
-        description: input.description,
-        sourceUrl: input.sourceUrl || undefined,
-        images,
-        isLocalDraft: true,
-      };
-      if (drafts.some((d) => d.id === editing.id))
-        setDrafts((d) => d.map((x) => (x.id === editing.id ? updated : x)));
-      else setEdits((e) => ({ ...e, [editing.id]: updated }));
-      toast.info('Đã cập nhật bản nháp trên trình duyệt', {
-        description: 'Chưa lưu vào database (cần backend Phase 02).',
-      });
-    } else {
-      const product: Product = {
-        id: `local-${crypto.randomUUID()}`,
-        name: input.name,
-        sku: input.sku,
-        categoryId: input.category,
-        price: input.price,
-        status: input.status,
-        description: input.description,
-        sourceUrl: input.sourceUrl || undefined,
-        images,
-        createdAt: new Date().toISOString(),
-        isDemo: false,
-        isLocalDraft: true,
-      };
-      setDrafts((d) => [product, ...d]);
-      toast.info('Đã tạo bản nháp sản phẩm', {
-        description: 'Chỉ lưu tạm trên trình duyệt – chưa lưu vào database.',
-      });
+  const remove = async () => {
+    setDeleting(true);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const p of confirm) {
+      try {
+        await productRepository.remove(p.id);
+        ok += 1;
+      } catch (error) {
+        failed.push(`${p.sku}: ${describeError(error)}`);
+      }
     }
+    setDeleting(false);
+    selection.setMany(
+      confirm.map((p) => p.id),
+      false,
+    );
+    setConfirm([]);
+    if (ok) toast.success(`Đã xoá ${ok} sản phẩm`);
+    if (failed.length)
+      toast.error('Một số sản phẩm chưa xoá được', { description: failed.join('\n') });
+    list.reload();
   };
 
   const columns: DataTableColumn<Product>[] = [
@@ -166,7 +146,12 @@ export function ProductsView() {
       header: 'Ảnh',
       cell: (p) => (
         <MediaPreview
-          image={p.images.find((i) => i.isPrimary) ?? p.images[0]}
+          image={{
+            id: p.id,
+            url: p.primaryImage?.previewUrl ?? undefined,
+            hue: hueFromString(p.id),
+            label: p.name,
+          }}
           className="size-11 border"
           alt={p.name}
         />
@@ -184,37 +169,34 @@ export function ProductsView() {
       sortKey: 'name',
       cell: (p) => (
         <div className="flex max-w-72 min-w-44 flex-col gap-0.5">
-          <button
-            type="button"
-            onClick={() => setViewing(p)}
-            className="cursor-pointer truncate text-left font-medium hover:underline"
-          >
+          <Link href={`/products/${p.id}`} className="truncate font-medium hover:underline">
             {p.name}
-          </button>
-          {p.isLocalDraft ? <DemoBadge label="NHÁP CỤC BỘ" /> : null}
+          </Link>
+          {p.sourceType === 'seed' ? <DemoBadge label="MẪU" /> : null}
         </div>
       ),
     },
     {
       id: 'category',
       header: 'Danh mục',
-      cell: (p) => <span className="whitespace-nowrap">{categoryName(p.categoryId)}</span>,
+      cell: (p) => <span className="whitespace-nowrap">{p.category}</span>,
     },
     {
       id: 'price',
       header: 'Giá bán',
-      sortKey: 'price',
+      sortKey: 'sellingPrice',
       align: 'right',
       cell: (p) => (
-        <span className="tabular font-medium whitespace-nowrap">{formatVnd(p.price)}</span>
+        <span className="tabular font-medium whitespace-nowrap">
+          {formatMoney(p.sellingPrice, p.currency)}
+        </span>
       ),
     },
     {
       id: 'images',
       header: 'Số ảnh',
-      sortKey: 'imageCount',
       align: 'center',
-      cell: (p) => <span className="tabular">{p.images.length}</span>,
+      cell: (p) => <span className="tabular">{p.imageCount}</span>,
     },
     {
       id: 'status',
@@ -244,8 +226,10 @@ export function ProductsView() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setViewing(p)}>
-              <Eye /> Xem chi tiết
+            <DropdownMenuItem asChild>
+              <Link href={`/products/${p.id}`}>
+                <Eye /> Xem chi tiết & ảnh
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => {
@@ -256,8 +240,8 @@ export function ProductsView() {
               <Pencil /> Chỉnh sửa
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => setConfirmIds([p.id])}>
-              <Trash2 /> Ẩn khỏi danh sách
+            <DropdownMenuItem variant="destructive" onSelect={() => setConfirm([p])}>
+              <Trash2 /> Xoá sản phẩm
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -265,29 +249,44 @@ export function ProductsView() {
     },
   ];
 
-  const total = Math.max(0, (list.data?.total ?? 0) + drafts.length - hidden.size);
+  const exportQuery = {
+    search: debounced || undefined,
+    category: category || undefined,
+    status: status || undefined,
+    sortBy: sort.key as ProductSortKey,
+    sortDir: sort.dir,
+  };
 
   return (
     <>
       <PageHeader
         title="Sản phẩm"
         icon={Package}
-        badges={<DemoBadge />}
-        description="Quản lý thông tin, giá bán và hình ảnh sản phẩm dùng để sản xuất nội dung."
+        description="Quản lý thông tin, giá bán và hình ảnh sản phẩm dùng để sản xuất nội dung. Dữ liệu lưu trong PostgreSQL."
         actions={
           <>
-            <UnavailableButton
-              variant="outline"
-              reason="Import Excel/CSV cần API import & hàng đợi xử lý – dự kiến Phase 02"
-            >
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
               <FileSpreadsheet /> Import Excel/CSV
-            </UnavailableButton>
-            <UnavailableButton
-              variant="outline"
-              reason="Thu thập sản phẩm từ URL – dự kiến Phase 02"
-            >
-              <Link2 /> Import URL
-            </UnavailableButton>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Download /> Xuất file
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <a href={productRepository.exportUrl(exportQuery, 'xlsx')} download>
+                    Excel (.xlsx) – theo bộ lọc hiện tại
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a href={productRepository.exportUrl(exportQuery, 'csv')} download>
+                    CSV UTF-8 – theo bộ lọc hiện tại
+                  </a>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               onClick={() => {
                 setEditing(undefined);
@@ -300,12 +299,6 @@ export function ProductsView() {
         }
       />
 
-      <DemoNotice>
-        Danh sách đang hiển thị <strong>dữ liệu DEMO</strong>. Thêm/sửa/ẩn sản phẩm chỉ tạo bản nháp
-        trên trình duyệt,
-        <strong> không ghi vào database</strong> cho tới khi có API ở Phase 02.
-      </DemoNotice>
-
       <div className="bg-card flex flex-col rounded-xl border shadow-xs">
         <div className="flex flex-col gap-3 border-b p-3 sm:p-4">
           <FilterBar canReset={filtersActive} onReset={resetFilters}>
@@ -315,19 +308,19 @@ export function ProductsView() {
                 setSearch(v);
                 setPage(1);
               }}
-              placeholder="Tìm theo tên, SKU, danh mục…"
+              placeholder="Tìm theo tên, SKU, danh mục, thương hiệu…"
               className="sm:w-72"
             />
             <NativeSelect
               aria-label="Lọc theo danh mục"
               className="sm:w-44"
-              value={categoryId}
+              value={category}
               onChange={(e) => {
-                setCategoryId(e.target.value);
+                setCategory(e.target.value);
                 setPage(1);
               }}
               placeholder="Tất cả danh mục"
-              options={CATEGORIES.map((c) => ({ value: c.id, label: c.name }))}
+              options={(categories.data ?? []).map((c) => ({ value: c, label: c }))}
             />
             <NativeSelect
               aria-label="Lọc theo trạng thái"
@@ -345,11 +338,12 @@ export function ProductsView() {
             />
             <NativeSelect
               aria-label="Sắp xếp"
-              className="sm:w-44"
+              className="sm:w-48"
               value={`${sort.key}:${sort.dir}`}
               onChange={(e) => {
                 const [key, dir] = e.target.value.split(':') as [string, 'asc' | 'desc'];
                 setSort({ key, dir });
+                setPage(1);
               }}
               options={SORT_OPTIONS}
             />
@@ -361,17 +355,19 @@ export function ProductsView() {
                 size="xs"
                 variant="ghost"
                 className="text-sidebar-foreground hover:bg-sidebar-accent"
-                onClick={() => router.push('/studio/videos')}
+                onClick={() =>
+                  router.push(`/studio/videos?products=${[...selection.selected].join(',')}`)
+                }
               >
-                Tạo video từ lựa chọn
+                <Clapperboard /> Tạo video từ lựa chọn
               </Button>
               <Button
                 size="xs"
                 variant="ghost"
                 className="text-sidebar-foreground hover:bg-sidebar-accent"
-                onClick={() => setConfirmIds([...selection.selected])}
+                onClick={() => setConfirm(rows.filter((r) => selection.has(r.id)))}
               >
-                <Trash2 /> Ẩn
+                <Trash2 /> Xoá
               </Button>
               <Button
                 size="xs"
@@ -402,18 +398,22 @@ export function ProductsView() {
           minWidth={980}
           empty={
             <EmptyState
-              title="Không tìm thấy sản phẩm"
+              title={filtersActive ? 'Không tìm thấy sản phẩm' : 'Chưa có sản phẩm nào'}
               description={
                 filtersActive
                   ? 'Thử đổi từ khoá hoặc xoá bộ lọc.'
-                  : 'Bắt đầu bằng cách thêm sản phẩm đầu tiên.'
+                  : 'Thêm sản phẩm thủ công hoặc import từ Excel/CSV.'
               }
               action={
                 filtersActive ? (
                   <Button variant="outline" size="sm" onClick={resetFilters}>
                     Xoá bộ lọc
                   </Button>
-                ) : null
+                ) : (
+                  <Button size="sm" onClick={() => setFormOpen(true)}>
+                    <Plus /> Thêm sản phẩm
+                  </Button>
+                )
               }
             />
           }
@@ -422,12 +422,13 @@ export function ProductsView() {
           <Pagination
             page={page}
             pageSize={pageSize}
-            total={total}
+            total={list.data?.total ?? 0}
             onPageChange={setPage}
             onPageSizeChange={(n) => {
               setPageSize(n);
               setPage(1);
             }}
+            pageSizeOptions={[10, 20, 50, 100]}
           />
         </div>
       </div>
@@ -437,32 +438,33 @@ export function ProductsView() {
           open={formOpen}
           onOpenChange={closeForm}
           product={editing}
-          onSubmit={handleSubmit}
+          categories={categories.data ?? []}
+          onSaved={(p, created) => {
+            list.reload();
+            if (created) {
+              toast.success(`Đã thêm "${p.name}"`, {
+                description: 'Đã lưu vào database.',
+                action: { label: 'Thêm ảnh', onClick: () => router.push(`/products/${p.id}`) },
+              });
+            } else {
+              toast.success(`Đã cập nhật "${p.name}"`);
+            }
+          }}
         />
       ) : null}
-      <ProductDetailDialog
-        product={viewing}
-        onOpenChange={(open) => !open && setViewing(undefined)}
-        onEdit={(p) => {
-          setViewing(undefined);
-          setEditing(p);
-          setFormOpen(true);
-        }}
-      />
+      <ImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={list.reload} />
       <ConfirmDialog
-        open={confirmIds.length > 0}
-        onOpenChange={(open) => !open && setConfirmIds([])}
+        open={confirm.length > 0}
+        onOpenChange={(open) => !open && !deleting && setConfirm([])}
         destructive
-        title={`Ẩn ${confirmIds.length} sản phẩm khỏi danh sách?`}
-        description="Phase 01 chưa có backend nên thao tác này chỉ ẩn sản phẩm trên trình duyệt hiện tại; dữ liệu không bị xoá."
-        confirmLabel="Ẩn sản phẩm"
-        onConfirm={() => {
-          setHidden((prev) => new Set([...prev, ...confirmIds]));
-          selection.setMany(confirmIds, false);
-          toast.success(`Đã ẩn ${confirmIds.length} sản phẩm`, {
-            description: 'Tải lại trang để hiện lại.',
-          });
-        }}
+        title={
+          confirm.length === 1
+            ? `Xoá sản phẩm "${confirm[0]?.name}"?`
+            : `Xoá ${confirm.length} sản phẩm?`
+        }
+        description="Sản phẩm bị xoá vĩnh viễn khỏi database. Ảnh trong thư viện vẫn được giữ lại (chỉ gỡ liên kết)."
+        confirmLabel={deleting ? 'Đang xoá…' : 'Xoá vĩnh viễn'}
+        onConfirm={() => void remove()}
       />
     </>
   );

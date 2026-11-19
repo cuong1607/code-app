@@ -3,22 +3,19 @@
 import {
   CalendarCheck,
   CheckSquare,
-  Eye,
   MoreHorizontal,
   Pencil,
   Send,
-  ShoppingCart,
   Square,
   Trash2,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import type { PublishStatus } from '@acs/shared';
+import { type PublishStatus, type PublishingDraft, normalizeSearchText } from '@acs/shared';
 import {
   ConfirmDialog,
   DataTable,
   type DataTableColumn,
-  DemoBadge,
   EmptyState,
   MediaPreview,
   SearchInput,
@@ -33,19 +30,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { NativeSelect } from '@/components/ui/native-select';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useSelection } from '@/hooks/use-selection';
-import { type PublishTab, TIKTOK_ACCOUNTS, accountById } from '@/lib/data';
-import { normalizeText } from '@/lib/data/query';
+import { describeError } from '@/lib/api/client';
 import { formatDateTime } from '@/lib/format';
 import { PUBLISH_MODE_LABEL, PUBLISH_STATUS_META } from '@/lib/labels';
-import type { PublishPost } from '@/types/domain';
 import { cn } from '@/lib/utils';
+import { hueFromString } from '@/types/domain';
 import { PostEditDialog } from './post-edit-dialog';
 import type { PublishingState } from './use-publishing';
 
-const TABS: { id: PublishTab; label: string }[] = [
+type Tab = 'all' | PublishStatus;
+const TABS: { id: Tab; label: string }[] = [
   { id: 'all', label: 'Tất cả' },
   { id: 'pending_review', label: 'Chờ kiểm duyệt' },
   { id: 'scheduled', label: 'Đã lên lịch' },
@@ -57,77 +53,72 @@ const TABS: { id: PublishTab; label: string }[] = [
 const NEED_TIKTOK = 'Cần tích hợp TikTok (OAuth + Content Posting API) – dự kiến Phase 08';
 
 export function PublishTable({ state }: { state: PublishingState }) {
-  const { posts, postsLoading, postsError, reloadPosts, updateDraft, removeDrafts } = state;
-  const [tab, setTab] = useState<PublishTab>('all');
-  const [accountFilter, setAccountFilter] = useState('');
+  const { posts, postsLoading, postsError, reloadPosts, updateDraft, removeDrafts, videos } = state;
+  const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
   const debounced = useDebouncedValue(search, 200);
-  const [editing, setEditing] = useState<PublishPost>();
+  const [editing, setEditing] = useState<PublishingDraft>();
   const [confirmIds, setConfirmIds] = useState<string[]>([]);
   const selection = useSelection();
 
+  const thumbOf = useMemo(
+    () => new Map(videos.map((v) => [v.id, v.images[0]?.previewUrl ?? undefined])),
+    [videos],
+  );
+
   const counts = useMemo(() => {
-    const c = { all: posts.length } as Record<PublishTab, number>;
+    const c = { all: posts.length } as Record<Tab, number>;
     for (const t of TABS)
       if (t.id !== 'all') c[t.id] = posts.filter((p) => p.status === t.id).length;
     return c;
   }, [posts]);
 
   const rows = useMemo(() => {
-    const term = normalizeText(debounced);
+    const term = normalizeSearchText(debounced);
     return posts.filter(
       (p) =>
-        (tab === 'all' || p.status === (tab as PublishStatus)) &&
-        (!accountFilter || p.accountId === accountFilter) &&
+        (tab === 'all' || p.status === tab) &&
         (!term ||
-          normalizeText(`${p.videoName} ${p.caption} ${p.hashtags.join(' ')}`).includes(term)),
+          normalizeSearchText(`${p.videoName} ${p.caption} ${p.hashtags.join(' ')}`).includes(
+            term,
+          )),
     );
-  }, [posts, tab, accountFilter, debounced]);
+  }, [posts, tab, debounced]);
 
-  const selectedDraftIds = posts
-    .filter((p) => selection.has(p.id) && p.isLocalDraft)
-    .map((p) => p.id);
-
-  const columns: DataTableColumn<PublishPost>[] = [
+  const columns: DataTableColumn<PublishingDraft>[] = [
     {
       id: 'video',
       header: 'Video',
       cell: (p) => (
         <div className="flex w-56 items-center gap-2.5">
-          <MediaPreview image={p.thumbnail} aspect="9:16" kind="video" className="w-9 border" />
-          <div className="min-w-0">
-            <button
-              type="button"
-              onClick={() => setEditing(p)}
-              className="line-clamp-2 cursor-pointer text-left text-[13px] leading-snug font-medium hover:underline"
-            >
-              {p.videoName}
-            </button>
-            <div className="mt-0.5">
-              {p.isLocalDraft ? <DemoBadge label="NHÁP CỤC BỘ" /> : <DemoBadge />}
-            </div>
-          </div>
+          <MediaPreview
+            image={{
+              id: p.id,
+              url: p.videoDraftId ? thumbOf.get(p.videoDraftId) : undefined,
+              hue: hueFromString(p.videoDraftId ?? p.id),
+            }}
+            aspect="9:16"
+            kind="video"
+            className="w-9 border"
+          />
+          <button
+            type="button"
+            onClick={() => setEditing(p)}
+            className="line-clamp-2 cursor-pointer text-left text-[13px] leading-snug font-medium hover:underline"
+          >
+            {p.videoName}
+          </button>
         </div>
       ),
     },
     {
       id: 'account',
       header: 'Kênh TikTok',
-      cell: (p) => {
-        const acc = accountById(p.accountId);
-        return (
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span
-              className="grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white"
-              style={{ background: `oklch(0.55 0.13 ${acc?.hue ?? 30})` }}
-              aria-hidden
-            >
-              {acc?.displayName.charAt(0) ?? '?'}
-            </span>
-            <span className="text-xs font-medium">{acc?.handle ?? p.accountId}</span>
-          </div>
-        );
-      },
+      cell: (p) => (
+        <span className={cn('text-xs whitespace-nowrap', !p.accountRef && 'text-muted-foreground')}>
+          {p.accountRef ?? 'Chưa gắn kênh'}
+        </span>
+      ),
     },
     {
       id: 'caption',
@@ -137,7 +128,7 @@ export function PublishTable({ state }: { state: PublishingState }) {
           className="text-muted-foreground line-clamp-2 w-60 text-xs leading-relaxed"
           title={p.caption}
         >
-          {p.caption}
+          {p.caption || '—'}
         </p>
       ),
     },
@@ -160,15 +151,7 @@ export function PublishTable({ state }: { state: PublishingState }) {
     {
       id: 'cart',
       header: 'Sản phẩm/giỏ hàng',
-      cell: (p) =>
-        p.productLink ? (
-          <span className="inline-flex max-w-44 items-center gap-1.5 text-xs">
-            <ShoppingCart className="text-primary-hover size-3.5 shrink-0" aria-hidden />
-            <span className="truncate">{p.productLink.replace('Giỏ hàng: ', '')}</span>
-          </span>
-        ) : (
-          <span className="text-muted-foreground text-xs">Không gắn</span>
-        ),
+      cell: () => <span className="text-muted-foreground text-xs">Không gắn</span>,
     },
     {
       id: 'mode',
@@ -187,16 +170,7 @@ export function PublishTable({ state }: { state: PublishingState }) {
     {
       id: 'status',
       header: 'Trạng thái',
-      cell: (p) => (
-        <div className="flex flex-col items-start gap-1">
-          <StatusBadge meta={PUBLISH_STATUS_META[p.status]} />
-          {p.errorMessage ? (
-            <span className="text-danger line-clamp-2 w-40 text-[11px]" title={p.errorMessage}>
-              {p.errorMessage}
-            </span>
-          ) : null}
-        </div>
-      ),
+      cell: (p) => <StatusBadge meta={PUBLISH_STATUS_META[p.status]} />,
     },
     {
       id: 'actions',
@@ -212,8 +186,7 @@ export function PublishTable({ state }: { state: PublishingState }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => setEditing(p)}>
-              {p.isLocalDraft ? <Pencil /> : <Eye />}{' '}
-              {p.isLocalDraft ? 'Chỉnh sửa nháp' : 'Xem chi tiết'}
+              <Pencil /> Chỉnh sửa nháp
             </DropdownMenuItem>
             <DropdownMenuItem disabled>
               <CalendarCheck /> Duyệt & lên lịch
@@ -223,14 +196,10 @@ export function PublishTable({ state }: { state: PublishingState }) {
               <Send /> Đăng ngay
               <span className="text-muted-foreground ml-auto text-[10px]">Phase 08</span>
             </DropdownMenuItem>
-            {p.isLocalDraft ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmIds([p.id])}>
-                  <Trash2 /> Xoá nháp
-                </DropdownMenuItem>
-              </>
-            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => setConfirmIds([p.id])}>
+              <Trash2 /> Xoá nháp
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ),
@@ -247,7 +216,6 @@ export function PublishTable({ state }: { state: PublishingState }) {
           <h2 id="publish-table-title" className="font-semibold">
             Danh sách lịch đăng
           </h2>
-          <DemoBadge label="DEMO + NHÁP" />
           <span className="text-muted-foreground ml-auto text-xs">
             Thời gian hiển thị theo giờ Việt Nam (UTC+7)
           </span>
@@ -293,14 +261,6 @@ export function PublishTable({ state }: { state: PublishingState }) {
             placeholder="Tìm video, caption, hashtag…"
             className="md:w-64"
           />
-          <NativeSelect
-            aria-label="Lọc theo kênh"
-            className="md:w-52"
-            value={accountFilter}
-            onChange={(e) => setAccountFilter(e.target.value)}
-            placeholder="Tất cả kênh"
-            options={TIKTOK_ACCOUNTS.map((a) => ({ value: a.id, label: a.handle }))}
-          />
           <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
             <Button
               size="sm"
@@ -326,14 +286,14 @@ export function PublishTable({ state }: { state: PublishingState }) {
             <UnavailableButton size="sm" variant="outline" reason={NEED_TIKTOK}>
               <CalendarCheck /> Duyệt ({selection.count})
             </UnavailableButton>
-            {selectedDraftIds.length ? (
+            {selection.count ? (
               <Button
                 size="sm"
                 variant="ghost"
                 className="text-danger"
-                onClick={() => setConfirmIds(selectedDraftIds)}
+                onClick={() => setConfirmIds([...selection.selected])}
               >
-                <Trash2 /> Xoá {selectedDraftIds.length} nháp
+                <Trash2 /> Xoá {selection.count} nháp
               </Button>
             ) : null}
           </div>
@@ -347,19 +307,20 @@ export function PublishTable({ state }: { state: PublishingState }) {
         columns={columns}
         getRowId={(p) => p.id}
         selection={selection}
-        loading={postsLoading && posts.length === 0}
+        loading={postsLoading}
         error={postsError}
         onRetry={reloadPosts}
-        minWidth={1280}
-        rowClassName={(p) => (p.isLocalDraft ? 'bg-primary/4' : undefined)}
+        minWidth={1220}
         empty={
           <EmptyState
             icon={CalendarCheck}
             title="Không có bài đăng phù hợp"
             description={
-              search || accountFilter || tab !== 'all'
-                ? 'Thử đổi tab, kênh hoặc từ khoá.'
-                : 'Tạo lịch đăng ở panel bên trái.'
+              tab !== 'all' && tab !== 'pending_review'
+                ? 'Chưa có bài nào được duyệt/đăng – cần tích hợp TikTok (Phase 08).'
+                : search
+                  ? 'Thử đổi từ khoá.'
+                  : 'Tạo lịch đăng ở panel bên trái.'
             }
           />
         }
@@ -369,10 +330,7 @@ export function PublishTable({ state }: { state: PublishingState }) {
         <PostEditDialog
           post={editing}
           onOpenChange={(open) => !open && setEditing(undefined)}
-          onSave={(p) => {
-            updateDraft(p);
-            toast.success('Đã cập nhật bài đăng nháp');
-          }}
+          onSave={(patch) => updateDraft(editing, patch)}
         />
       ) : null}
       <ConfirmDialog
@@ -380,12 +338,18 @@ export function PublishTable({ state }: { state: PublishingState }) {
         onOpenChange={(open) => !open && setConfirmIds([])}
         destructive
         title={`Xoá ${confirmIds.length} bài đăng nháp?`}
-        description="Bài nháp chỉ nằm trên trình duyệt, chưa gửi lên TikTok. Không thể hoàn tác."
+        description="Bài nháp sẽ bị xoá khỏi database. Không thể hoàn tác."
         confirmLabel="Xoá nháp"
         onConfirm={() => {
-          removeDrafts(confirmIds);
-          selection.setMany(confirmIds, false);
-          toast.success(`Đã xoá ${confirmIds.length} bài nháp`);
+          const ids = confirmIds;
+          void removeDrafts(ids)
+            .then(() => {
+              selection.setMany(ids, false);
+              toast.success(`Đã xoá ${ids.length} bài nháp`);
+            })
+            .catch((error: unknown) =>
+              toast.error('Không xoá được', { description: describeError(error) }),
+            );
         }}
       />
     </section>

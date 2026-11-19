@@ -16,6 +16,17 @@ export const formatVnd = (value: number) => vndFormatter.format(value);
 export const formatNumber = (value: number) => numberFormatter.format(value);
 export const formatUsd = (value: number) => usdFormatter.format(value);
 
+/** Tiền từ API dạng chuỗi Decimal ("199000.00") -> "199.000 ₫" / "$19.99". */
+export function formatMoney(
+  amount: string | number | null | undefined,
+  currency: string = 'VND',
+): string {
+  if (amount === null || amount === undefined || amount === '') return '—';
+  const value = typeof amount === 'number' ? amount : Number(amount);
+  if (!Number.isFinite(value)) return '—';
+  return currency === 'USD' ? usdFormatter.format(value) : vndFormatter.format(value);
+}
+
 /** Hiển thị thời gian theo Asia/Ho_Chi_Minh (dữ liệu vào là ISO UTC). */
 export const formatDateTime = (iso: string) => formatDisplayDateTime(iso);
 export const formatDate = (iso: string) => formatDisplayDateTime(iso).slice(0, 10);

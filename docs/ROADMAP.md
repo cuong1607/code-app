@@ -38,12 +38,11 @@ Cập nhật lần cuối: 2026-11-19 (UTC)
 | 21  | Đường ống API → BullMQ → Worker (ping job hoàn tất)         | ✅         | `POST /system/ping` 202 → `GET` trả `state: completed`, `roundTripMs: 7`                      |
 | 22  | Tự tạo bucket MinIO (lúc khởi động hoặc khi MinIO lên muộn) | ✅         | Bucket `acs-media` được tạo tự động khi MinIO lên sau API; có test                            |
 | 23  | README Windows + WSL2, ARCHITECTURE, CLAUDE.md              | ✅         | –                                                                                             |
-| 24  | Git repository                                              | ❌         | Máy chưa cài Git                                                                              |
+| 24  | Git repository                                              | ✅         | `git init` (Phase 02), checkpoint `858e40e` trước khi sửa code; quét secret trước commit      |
 
-### Việc còn lại để đóng Giai đoạn 00
+### Việc còn lại
 
-1. Cài **Git**, `git init`, commit đầu tiên (#24).
-2. (Tuỳ chọn) Cài FFmpeg: `winget install --id Gyan.FFmpeg -e`. Cần trước giai đoạn 06.
+1. (Tuỳ chọn) Cài FFmpeg: `winget install --id Gyan.FFmpeg -e`. Cần trước giai đoạn 06.
 
 ### Ghi chú kỹ thuật phát sinh trong GĐ 00
 
@@ -94,13 +93,68 @@ Ghi chú kỹ thuật GĐ 01:
 
 Chưa làm trong GĐ 01 (cố ý, theo phạm vi): lưu dữ liệu thật, upload MinIO, gọi AI, render video, đăng TikTok, xác thực.
 
-## Giai đoạn 02 – Backend sản phẩm, lưu trữ & import (⬜)
+> **Từ Phase 02:** dữ liệu demo (`src/mocks`) đã được GỠ BỎ; các mục 5, 6, 9, 10, 11, 12, 13 ở trên chạy bằng dữ liệu thật
+> (xem Giai đoạn 02). Bảng trên giữ nguyên làm lịch sử nghiệm thu Phase 01.
 
-- Model `Product`, `ProductImage`, `Asset`, `Setting` (Prisma) + CRUD API dùng `productInputSchema` dùng chung.
-- Thay `productRepository`/`mediaRepository` trong `apps/web/src/lib/data` bằng `apiRequest(...)` (giữ nguyên UI).
-- Upload ảnh lên MinIO qua presigned URL (thay phần "chỉ xem trước" của `FileUpload`); tải xuống qua presigned GET.
-- Import Excel/CSV và import từ URL (`ProductSourceProvider`, queue `ingest`, retry/rate-limit, tuân thủ điều khoản nguồn).
-- API lưu cài đặt (trừ secret – secret vẫn chỉ ở server).
+## Giai đoạn 02 – Database, quản lý sản phẩm & thư viện media (✅)
+
+Cập nhật lần cuối: 2026-11-19 (UTC). Chi tiết endpoint: [API.md](API.md).
+
+### Database (Prisma 6, PostgreSQL 17)
+
+Migration `20261119103145_phase02_products_media_drafts` (giữ nguyên `system_settings` của Phase 00):
+`workspaces`, `application_settings`, `products`, `media_assets`, `product_media`, `media_uploads`, `video_drafts`,
+`publishing_drafts`, `script_drafts`, `prompt_presets` + extension `pg_trgm`. UUID, FK có `ON DELETE` rõ ràng, unique
+`(workspace_id, sku)`, `(workspace_id, sha256)`, `(bucket, storage_key)`, `(workspace_id, scope, name)`; index GIN trigram trên
+`products.search_text`. Tiền `Decimal(14,2)`. Không soft delete (không cần ở phase này). `prisma migrate diff` = không drift.
+Seed idempotent: workspace phát triển + 12 sản phẩm **MẪU** (`source_type = seed`, gắn nhãn trên UI), không tạo ảnh giả.
+
+| #   | Hạng mục                                                                                                                                                                                                      | Trạng thái        | Cách kiểm chứng                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------- |
+| 1   | Product API: CRUD, tìm kiếm tiếng Việt không dấu, lọc, sắp xếp, phân trang, SKU trùng → 409, lỗi 422 theo trường                                                                                              | ✅                | Integration (DB thật) + E2E                                                                               |
+| 2   | Trang `/products` dùng API thật: thêm/sửa/xoá (xác nhận), toast, skeleton, lỗi tiếng Việt, giữ dữ liệu khi tải lại                                                                                            | ✅                | E2E: tạo → reload còn; SKU trùng hiện dưới ô; sửa giá; xoá                                                |
+| 3   | Trang chi tiết `/products/[id]`: thông tin, giá vốn/bán, biên lợi nhuận, thông số, nguồn, upload nhiều ảnh, đổi ảnh đại diện, sắp xếp, gỡ ảnh, xem lớn                                                        | ✅                | E2E: upload 2 ảnh, đổi đại diện, sắp xếp → reload giữ thứ tự, gỡ ảnh, file PDF bị chặn                    |
+| 4   | Upload presigned MinIO: xin URL → PUT trực tiếp → server xác minh (dung lượng thật, magic bytes, kích thước ảnh, chống decompression bomb) → tạo MediaAsset; chống trùng SHA-256                              | ✅                | Integration: PNG/JPEG/WebP, nhiều ảnh, trùng, gif, file giả mạo, vượt dung lượng, sai dung lượng khai báo |
+| 5   | Preview / tải xuống qua presigned GET; xoá ảnh đang dùng → 409, xác nhận → gỡ liên kết                                                                                                                        | ✅                | Integration (so khớp byte) + E2E (sự kiện download, tên file đúng)                                        |
+| 6   | Dọn dẹp: phiên upload hết hạn + object mồ côi (định kỳ 10 phút + endpoint thủ công)                                                                                                                           | ✅                | Integration: phiên quá hạn → `expired`                                                                    |
+| 7   | MinIO lên sau API: tự khôi phục (`ensureBucket` lại khi lỗi kết nối)                                                                                                                                          | ✅                | Cơ chế Phase 00 mở rộng cho mọi thao tác object; restart Docker không cần restart API                     |
+| 8   | Import `.xlsx`/`.csv`: đọc file (BOM, dấu `,`/`;`/tab), mapping tự gợi ý, preview, validate từng dòng, 3 chế độ trùng SKU, báo cáo                                                                            | ✅                | Unit + Integration (CSV, XLSX, dòng lỗi, trùng trong file, trùng DB, thiếu cột) + E2E                     |
+| 9   | Xuất CSV (UTF-8 BOM) / XLSX theo bộ lọc + file mẫu import                                                                                                                                                     | ✅                | Integration                                                                                               |
+| 10  | URL ảnh trong file import: chỉ ghi nhận; tải thủ công qua `RemoteImageFetcher` (allowlist, https, chặn IP nội bộ tại thời điểm kết nối, redirect ≤3 kiểm tra lại, giới hạn dung lượng, timeout, xác minh ảnh) | ✅ (mặc định TẮT) | Unit: chặn IP nội bộ, tên miền giả mạo, http, cổng lạ; tên miền trỏ về 127.0.0.1 bị chặn                  |
+| 11  | Thư viện `/library` dùng dữ liệu thật: 6 tab, grid/list, tìm kiếm, sắp xếp, phân trang, metadata, tải xuống, xoá                                                                                              | ✅                | E2E: upload → metadata → tải xuống → xoá                                                                  |
+| 12  | Bản nháp Video Factory, lịch đăng, kịch bản, prompt đã lưu → PostgreSQL (tạo/tải lại/sửa/xoá)                                                                                                                 | ✅                | Integration + E2E (reload vẫn còn)                                                                        |
+| 13  | Prompt cũ ở `localStorage` (Phase 01): không tự xoá/ghi đè – người dùng chủ động "Chuyển vào database"                                                                                                        | ✅                | Xem `prompt-section.tsx`                                                                                  |
+| 14  | Cài đặt không nhạy cảm lưu DB (deep-merge, schema strict chặn khoá lạ như `apiKey`)                                                                                                                           | ✅                | Unit + Integration + E2E (lưu ngân sách → reload còn)                                                     |
+| 15  | Dashboard số liệu thật (sản phẩm, ảnh, dung lượng, bản nháp, sản phẩm mới theo ngày giờ VN, hoạt động)                                                                                                        | ✅                | Integration                                                                                               |
+| 16  | Truy cập dev-local: workspace do server quyết định, chỉ loopback, cấm production, API + web bind 127.0.0.1                                                                                                    | ✅                | Unit guard; env test production bị từ chối; kết nối qua IP LAN tới 3000/4000 bị từ chối                   |
+| 17  | Persistence: refresh trình duyệt, restart API, restart Docker (không xoá volume)                                                                                                                              | ✅                | Script đánh dấu: sau restart sản phẩm còn, giá `12345.67` đúng, ảnh SHA-256 khớp                          |
+
+**Kết quả kiểm thử cuối phiên:** `pnpm check` exit 0 – **130 unit test** (shared 45, api 57, web 24, worker 4) ·
+`pnpm build` exit 0 · `pnpm test:integration` **28/28** (PostgreSQL + MinIO thật) · `pnpm test:e2e` **40/40**.
+
+Thay đổi so với Phase 01 (có chủ đích):
+
+- Bỏ dữ liệu demo khỏi các module đã có API (không trộn demo với dữ liệu thật). Danh mục cấu hình tĩnh (giọng đọc,
+  template…) chuyển sang `src/lib/catalog.ts`. "Khuôn kịch bản mẫu" và "khung ảnh mẫu" vẫn giữ nhãn.
+- Lịch đăng: chưa có tài khoản TikTok thật → bài nháp lưu "chưa gắn kênh"; nguồn video = luồng nháp Video Factory.
+- Bộ test unit web giảm từ 27 xuống 24 vì bỏ test của `applyListQuery` (lọc demo phía client); logic tương đương nay chạy
+  phía server và được kiểm thử ở tầng integration.
+- E2E Phase 01 viết lại cho hành vi API thật (33 → 40 test).
+
+Ghi chú kỹ thuật GĐ 02:
+
+- Windows khoá file engine Prisma khi API đang chạy → dừng `pnpm dev` trước khi `pnpm install`/`prisma generate`.
+- Zod 4 `.partial()` vẫn áp `default` → tách schema gốc (không default) cho PATCH, tránh ghi đè `currency`/`attributes`.
+- Express mặc định giới hạn JSON 100 KB → API dùng 15 MB cho import commit.
+- Prisma gửi tham số raw query dạng `bigint` → cần ép `::int` (`make_interval`).
+- MinIO (pgsty) cho phép CORS mặc định; chữ ký presigned PUT ràng buộc `Content-Type` (sai → 403).
+
+### Giới hạn hiện tại
+
+- Chưa có xác thực thật – chỉ dùng trên máy cục bộ (Phase 09).
+- Tải ảnh từ URL mặc định TẮT; cần quản trị viên cấu hình `IMPORT_IMAGE_ALLOWED_HOSTS` với nguồn có quyền sử dụng ảnh.
+- Import xử lý đồng bộ trong request (≤ 5.000 dòng); file lớn hơn nên chạy qua hàng đợi ở phase sau.
+- Thanh tiến độ upload là trạng thái từng file (chưa đo % byte).
 
 ## Giai đoạn 03 – Kịch bản AI (⬜)
 

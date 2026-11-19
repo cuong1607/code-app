@@ -1,115 +1,108 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import type { PublishMode } from '@acs/shared';
+import type { PublishMode, PublishingDraft, PublishingDraftInput } from '@acs/shared';
 import { useAsync } from '@/hooks/use-async';
-import { publishRepository, videoJobRepository } from '@/lib/data';
+import { publishingDraftRepository, videoDraftRepository } from '@/lib/data';
 import { parseHashtags } from '@/lib/format';
-import type { PublishPost, VideoJob } from '@/types/domain';
 import { computeSchedule } from './schedule';
 
 export interface PublishConfig {
-  accountId: string;
   videoIds: string[];
   mode: PublishMode;
   caption: string;
   hashtags: string;
   startLocal: string;
   intervalMinutes: number;
-  attachCart: boolean;
 }
 
 const DEFAULT_CONFIG: PublishConfig = {
-  accountId: '',
   videoIds: [],
   mode: 'scheduled',
   caption: '{product} – ưu đãi hôm nay, số lượng có hạn! 🔥',
   hashtags: '#xuhuong #review #fyp',
   startLocal: '',
   intervalMinutes: 60,
-  attachCart: false,
 };
 
 /**
  * State trang Lịch đăng TikTok.
- * - Bài đăng DEMO chỉ đọc.
- * - "Tạo lịch đăng" sinh bài NHÁP CỤC BỘ ở trạng thái "Chờ kiểm duyệt" – KHÔNG gửi TikTok.
+ * - Bài đăng là BẢN NHÁP LƯU DATABASE (trạng thái "Chờ kiểm duyệt"), KHÔNG gửi TikTok (Phase 08).
+ * - Video nguồn = luồng sản xuất nháp của Video Factory (chưa render).
  */
 export function usePublishing() {
   const [config, setConfig] = useState<PublishConfig>(DEFAULT_CONFIG);
-  const [drafts, setDrafts] = useState<PublishPost[]>([]);
-  const postsQuery = useAsync(() => publishRepository.list(), []);
-  const videosQuery = useAsync(() => videoJobRepository.list(), []);
+  const posts = useAsync(() => publishingDraftRepository.list(), []);
+  const videos = useAsync(() => videoDraftRepository.list(), []);
+  const [creating, setCreating] = useState(false);
 
   const update = useCallback(<K extends keyof PublishConfig>(key: K, value: PublishConfig[K]) => {
     setConfig((c) => ({ ...c, [key]: value }));
   }, []);
 
-  /** Chỉ video đã hoàn thành mới đăng được. */
-  const publishableVideos: VideoJob[] = useMemo(
-    () => (videosQuery.data?.items ?? []).filter((v) => v.status === 'completed'),
-    [videosQuery.data],
-  );
-
   const hashtags = useMemo(() => parseHashtags(config.hashtags), [config.hashtags]);
+  const videoList = useMemo(() => videos.data ?? [], [videos.data]);
 
-  const createDrafts = useCallback((): number => {
-    const videos = publishableVideos.filter((v) => config.videoIds.includes(v.id));
+  const createDrafts = useCallback(async (): Promise<number> => {
+    const chosen = videoList.filter((v) => config.videoIds.includes(v.id));
     const now = new Date().toISOString();
     const times =
       config.mode === 'scheduled'
         ? computeSchedule({
             startLocal: config.startLocal,
             intervalMinutes: config.intervalMinutes,
-            count: videos.length,
+            count: chosen.length,
           })
-        : videos.map(() => now);
-    const created: PublishPost[] = videos.map((video, i) => ({
-      id: `local-post-${crypto.randomUUID()}`,
-      videoJobId: video.id,
-      videoName: video.name,
-      thumbnail: video.thumbnail ?? video.images[0] ?? { id: `t-${video.id}`, hue: 30 },
-      accountId: config.accountId,
-      caption: config.caption.replaceAll('{product}', video.productName),
+        : chosen.map(() => now);
+    const inputs: PublishingDraftInput[] = chosen.map((v, i) => ({
+      videoDraftId: v.id,
+      accountRef: null,
+      caption: config.caption.replaceAll('{product}', v.productName),
       hashtags,
-      productLink: config.attachCart ? `Giỏ hàng: ${video.productName}` : undefined,
       mode: config.mode,
       scheduledAt: times[i]!,
-      status: 'pending_review',
-      isDemo: false,
-      isLocalDraft: true,
+      attachCart: false,
     }));
-    setDrafts((prev) => [...created, ...prev]);
-    return created.length;
-  }, [config, hashtags, publishableVideos]);
+    setCreating(true);
+    try {
+      const created = await publishingDraftRepository.create(inputs);
+      posts.reload();
+      return created.length;
+    } finally {
+      setCreating(false);
+    }
+  }, [config, hashtags, videoList, posts]);
 
-  const updateDraft = useCallback((post: PublishPost) => {
-    setDrafts((prev) => prev.map((p) => (p.id === post.id ? post : p)));
-  }, []);
+  const updateDraft = useCallback(
+    async (
+      post: PublishingDraft,
+      patch: { caption: string; hashtags: string[]; scheduledAt: string },
+    ) => {
+      await publishingDraftRepository.update(post.id, patch);
+      posts.reload();
+    },
+    [posts],
+  );
 
-  const removeDrafts = useCallback((ids: readonly string[]) => {
-    const set = new Set(ids);
-    setDrafts((prev) => prev.filter((p) => !set.has(p.id)));
-  }, []);
-
-  const posts = useMemo(
-    () =>
-      [...drafts, ...(postsQuery.data?.items ?? [])].sort((a, b) =>
-        a.scheduledAt.localeCompare(b.scheduledAt),
-      ),
-    [drafts, postsQuery.data],
+  const removeDrafts = useCallback(
+    async (ids: readonly string[]) => {
+      await publishingDraftRepository.removeMany([...ids]);
+      posts.reload();
+    },
+    [posts],
   );
 
   return {
     config,
     update,
     hashtags,
-    publishableVideos,
-    videosLoading: videosQuery.loading,
-    posts,
-    postsLoading: postsQuery.loading,
-    postsError: postsQuery.error,
-    reloadPosts: postsQuery.reload,
+    videos: videoList,
+    videosLoading: videos.loading && !videos.data,
+    posts: posts.data ?? [],
+    postsLoading: posts.loading && !posts.data,
+    postsError: posts.error,
+    reloadPosts: posts.reload,
+    creating,
     createDrafts,
     updateDraft,
     removeDrafts,

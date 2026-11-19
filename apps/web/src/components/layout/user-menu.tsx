@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, CircleUser, LogOut, Settings } from 'lucide-react';
+import { ChevronDown, CircleUser, LogIn, Settings } from 'lucide-react';
 import Link from 'next/link';
 import {
   DropdownMenu,
@@ -10,8 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { DEMO_USER } from '@/lib/data';
 
+/** Chưa có xác thực (Phase 09): hiển thị trung thực trạng thái "chế độ phát triển". */
 export function UserMenu() {
   return (
     <DropdownMenu>
@@ -19,21 +19,20 @@ export function UserMenu() {
         className="hover:bg-accent focus-visible:ring-ring/50 flex cursor-pointer items-center gap-2 rounded-lg p-1 pr-2 outline-none focus-visible:ring-[3px]"
         aria-label="Menu tài khoản"
       >
-        <span className="bg-sidebar text-sidebar-primary grid size-8 place-items-center rounded-full text-xs font-bold">
-          {DEMO_USER.initials}
+        <span className="bg-sidebar text-sidebar-primary grid size-8 place-items-center rounded-full">
+          <CircleUser className="size-4" aria-hidden />
         </span>
         <span className="hidden text-left leading-tight md:block">
-          <span className="block text-[13px] font-medium">{DEMO_USER.name}</span>
-          <span className="text-muted-foreground block text-[11px]">{DEMO_USER.role}</span>
+          <span className="block text-[13px] font-medium">Chế độ phát triển</span>
+          <span className="text-muted-foreground block text-[11px]">Chưa đăng nhập</span>
         </span>
         <ChevronDown className="text-muted-foreground hidden size-4 md:block" aria-hidden />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+      <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel className="font-normal">
-          <p className="font-medium">{DEMO_USER.name}</p>
-          <p className="text-muted-foreground text-xs">{DEMO_USER.email}</p>
-          <p className="mt-1.5 inline-block rounded border border-dashed border-primary/60 px-1 text-[10px] font-semibold">
-            TÀI KHOẢN DEMO
+          <p className="font-medium">Chế độ phát triển (dev-local)</p>
+          <p className="text-muted-foreground mt-1 text-xs leading-snug">
+            Chưa có hệ thống đăng nhập. API chỉ chấp nhận truy cập từ máy cục bộ.
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -49,7 +48,7 @@ export function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled>
-          <LogOut /> Đăng xuất
+          <LogIn /> Đăng nhập
           <span className="text-muted-foreground ml-auto text-[10px]">Phase 09</span>
         </DropdownMenuItem>
       </DropdownMenuContent>

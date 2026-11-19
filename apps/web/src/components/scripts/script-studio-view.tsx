@@ -1,10 +1,11 @@
 'use client';
 
-import { FileText, FlaskConical, Sparkles, Wand2 } from 'lucide-react';
+import { FilePlus2, FileText, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { VIDEO_DURATIONS } from '@acs/shared';
+import { type ScriptContent, type ScriptDraft, VIDEO_DURATIONS } from '@acs/shared';
 import {
+  ConfirmDialog,
   DemoNotice,
   EmptyState,
   Field,
@@ -17,19 +18,21 @@ import {
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
 import { useAsync } from '@/hooks/use-async';
+import { describeError } from '@/lib/api/client';
 import {
   AUDIENCES,
   SCRIPT_STYLES,
   SCRIPT_TONES,
   productRepository,
-  scriptRepository,
+  scriptDraftRepository,
 } from '@/lib/data';
-import { describeError } from '@/lib/api/client';
-import type { GeneratedScript } from '@/types/domain';
+import { formatDateTime } from '@/lib/format';
+import { buildSampleScript } from '@/lib/sample-script';
 import { ScriptResult } from './script-result';
 
 export function ScriptStudioView() {
   const products = useAsync(() => productRepository.options(), []);
+  const drafts = useAsync(() => scriptDraftRepository.list(), []);
   const [productId, setProductId] = useState('');
   const [style, setStyle] = useState<string>(SCRIPT_STYLES[0].id);
   const [prompt, setPrompt] = useState('');
@@ -37,22 +40,69 @@ export function ScriptStudioView() {
   const [audience, setAudience] = useState<string>(AUDIENCES[0].id);
   const [tone, setTone] = useState<string>(SCRIPT_TONES[0].id);
   const [variants, setVariants] = useState(3);
-  const [script, setScript] = useState<GeneratedScript>();
-  const [loadingDemo, setLoadingDemo] = useState(false);
+  const [script, setScript] = useState<ScriptContent>();
+  const [fromSample, setFromSample] = useState(false);
+  const [draft, setDraft] = useState<ScriptDraft>();
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const product = products.data?.find((p) => p.id === productId);
 
-  const loadDemo = async () => {
-    setLoadingDemo(true);
+  const startFromSample = () => {
+    setScript(buildSampleScript(product?.name ?? 'Sản phẩm', duration));
+    setFromSample(true);
+    setDraft(undefined);
+    toast.info('Đã nạp khuôn kịch bản mẫu', {
+      description: 'Nội dung cố định để bạn chỉnh sửa – không do AI tạo.',
+    });
+  };
+
+  const loadDraft = (id: string) => {
+    const d = drafts.data?.find((x) => x.id === id);
+    if (!d) return;
+    setDraft(d);
+    setScript(d.content);
+    setFromSample(false);
+    setProductId(d.productId ?? '');
+    if (typeof d.config.style === 'string') setStyle(d.config.style);
+    if (typeof d.config.tone === 'string') setTone(d.config.tone);
+    if (typeof d.config.audience === 'string') setAudience(d.config.audience);
+    if (typeof d.config.duration === 'number') setDuration(d.config.duration);
+    if (typeof d.config.prompt === 'string') setPrompt(d.config.prompt);
+  };
+
+  const save = async () => {
+    if (!script) return;
+    setSaving(true);
+    const input = {
+      productId: productId || null,
+      content: script,
+      config: { style, tone, audience, duration, variants, prompt },
+    };
     try {
-      setScript(await scriptRepository.demoScript(product?.name ?? 'Sản phẩm mẫu', duration));
-      toast.info('Đã nạp kịch bản MẪU', {
-        description: 'Đây là nội dung cố định để xem bố cục, không do AI tạo.',
-      });
+      const saved = draft
+        ? await scriptDraftRepository.update(draft.id, input)
+        : await scriptDraftRepository.create(input);
+      setDraft(saved);
+      drafts.reload();
+      toast.success(draft ? 'Đã cập nhật kịch bản nháp' : 'Đã lưu kịch bản nháp vào database');
     } catch (error) {
-      toast.error('Không nạp được kịch bản mẫu', { description: describeError(error) });
+      toast.error('Không lưu được kịch bản', { description: describeError(error) });
     } finally {
-      setLoadingDemo(false);
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!draft) return;
+    try {
+      await scriptDraftRepository.remove(draft.id);
+      toast.success('Đã xoá kịch bản nháp');
+      setDraft(undefined);
+      setScript(undefined);
+      drafts.reload();
+    } catch (error) {
+      toast.error('Không xoá được', { description: describeError(error) });
     }
   };
 
@@ -64,9 +114,8 @@ export function ScriptStudioView() {
         description="AI viết kịch bản video bán hàng: hook, lời thoại, phân cảnh, caption và hashtag."
       />
       <DemoNotice tone="info">
-        Chưa có AI script provider (dự kiến <strong>Phase 03</strong>). Bạn có thể cấu hình và xem
-        <strong> kịch bản mẫu</strong> để duyệt bố cục; nút tạo kịch bản sẽ hoạt động khi provider
-        được tích hợp.
+        Chưa có AI script provider (dự kiến <strong>Phase 03</strong>). Hiện bạn có thể bắt đầu từ
+        <strong> khuôn kịch bản mẫu</strong>, chỉnh sửa và <strong>lưu nháp vào database</strong>.
       </DemoNotice>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(320px,30%)_minmax(0,1fr)]">
@@ -77,7 +126,13 @@ export function ScriptStudioView() {
                 id="sc-product"
                 value={productId}
                 onChange={(e) => setProductId(e.target.value)}
-                placeholder={products.loading ? 'Đang tải…' : 'Chọn sản phẩm (DEMO)'}
+                placeholder={
+                  products.loading
+                    ? 'Đang tải…'
+                    : products.data?.length
+                      ? 'Chọn sản phẩm'
+                      : 'Chưa có sản phẩm'
+                }
                 options={(products.data ?? []).map((p) => ({
                   value: p.id,
                   label: `${p.name} · ${p.sku}`,
@@ -145,12 +200,43 @@ export function ScriptStudioView() {
 
           <div className="bg-card flex flex-col gap-2 rounded-xl border p-3.5 shadow-xs">
             <UnavailableButton reason="Cần AI script provider phía server – dự kiến Phase 03">
-              <Sparkles /> Tạo {variants} kịch bản
+              <Sparkles /> Tạo {variants} kịch bản bằng AI
             </UnavailableButton>
-            <Button variant="outline" onClick={loadDemo} disabled={loadingDemo}>
-              <FlaskConical /> Xem kịch bản mẫu (DEMO)
+            <Button variant="outline" onClick={startFromSample}>
+              <FilePlus2 /> Bắt đầu từ khuôn mẫu
             </Button>
           </div>
+
+          <SectionCard title="Kịch bản đã lưu" icon={FileText}>
+            <div className="flex gap-1.5">
+              <NativeSelect
+                aria-label="Chọn kịch bản đã lưu"
+                className="min-w-0 flex-1"
+                value={draft?.id ?? ''}
+                onChange={(e) => loadDraft(e.target.value)}
+                placeholder={
+                  drafts.loading
+                    ? 'Đang tải…'
+                    : drafts.data?.length
+                      ? 'Mở kịch bản đã lưu…'
+                      : 'Chưa có kịch bản đã lưu'
+                }
+                options={(drafts.data ?? []).map((d) => ({
+                  value: d.id,
+                  label: `${d.content.title} · ${formatDateTime(d.updatedAt)}`,
+                }))}
+              />
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label="Xoá kịch bản đang mở"
+                disabled={!draft}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 />
+              </Button>
+            </div>
+          </SectionCard>
         </div>
 
         <section
@@ -158,22 +244,38 @@ export function ScriptStudioView() {
           className="bg-card min-w-0 rounded-xl border p-4 shadow-xs sm:p-5"
         >
           {script ? (
-            <ScriptResult script={script} onChange={setScript} />
+            <ScriptResult
+              script={script}
+              onChange={setScript}
+              fromSample={fromSample}
+              saving={saving}
+              savedAt={draft?.updatedAt}
+              onSave={() => void save()}
+            />
           ) : (
             <EmptyState
               icon={Wand2}
               className="py-20"
               title="Chưa có kịch bản"
-              description='Cấu hình ở bên trái. Hiện chưa có AI – bấm "Xem kịch bản mẫu" để xem bố cục kết quả.'
+              description="Chưa có AI – bắt đầu từ khuôn mẫu để chỉnh sửa, hoặc mở một kịch bản đã lưu."
               action={
-                <Button variant="outline" size="sm" onClick={loadDemo}>
-                  <FlaskConical /> Xem kịch bản mẫu
+                <Button variant="outline" size="sm" onClick={startFromSample}>
+                  <FilePlus2 /> Bắt đầu từ khuôn mẫu
                 </Button>
               }
             />
           )}
         </section>
       </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        destructive
+        title="Xoá kịch bản nháp?"
+        description="Kịch bản sẽ bị xoá khỏi database."
+        confirmLabel="Xoá"
+        onConfirm={() => void remove()}
+      />
     </>
   );
 }

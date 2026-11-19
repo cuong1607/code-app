@@ -7,10 +7,11 @@ import { DemoBadge, UnavailableButton } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { GeneratedScript } from '@/types/domain';
+import type { ScriptContent } from '@acs/shared';
+import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-export function scriptToText(s: GeneratedScript): string {
+export function scriptToText(s: ScriptContent): string {
   const scenes = s.scenes
     .map(
       (sc) =>
@@ -79,22 +80,36 @@ function Block({
   );
 }
 
-/** Hiển thị & chỉnh sửa (cục bộ) một kịch bản. */
+/** Hiển thị & chỉnh sửa một kịch bản; "Lưu" ghi bản nháp vào database. */
 export function ScriptResult({
   script,
   onChange,
+  fromSample,
+  saving,
+  savedAt,
+  onSave,
 }: {
-  script: GeneratedScript;
-  onChange: (script: GeneratedScript) => void;
+  script: ScriptContent;
+  onChange: (script: ScriptContent) => void;
+  /** Nội dung xuất phát từ khuôn mẫu (không phải AI) */
+  fromSample: boolean;
+  saving: boolean;
+  savedAt?: string;
+  onSave: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const set = <K extends keyof GeneratedScript>(key: K, value: GeneratedScript[K]) =>
+  const set = <K extends keyof ScriptContent>(key: K, value: ScriptContent[K]) =>
     onChange({ ...script, [key]: value });
 
   return (
     <article className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
-        {script.isDemo ? <DemoBadge label="KỊCH BẢN MẪU – KHÔNG PHẢI AI" /> : null}
+        {fromSample ? <DemoBadge label="TỪ KHUÔN MẪU – KHÔNG PHẢI AI" /> : null}
+        {savedAt ? (
+          <span className="text-muted-foreground text-xs">
+            Đã lưu lúc {formatDateTime(savedAt)}
+          </span>
+        ) : null}
         <div className="ml-auto flex flex-wrap gap-1.5">
           <Button
             size="sm"
@@ -117,9 +132,9 @@ export function ScriptResult({
           >
             <RefreshCw /> Tạo lại
           </UnavailableButton>
-          <UnavailableButton size="sm" reason="Lưu kịch bản cần API & database – dự kiến Phase 03">
-            <Save /> Lưu
-          </UnavailableButton>
+          <Button size="sm" onClick={onSave} disabled={saving || !script.title.trim()}>
+            <Save /> {saving ? 'Đang lưu…' : 'Lưu nháp'}
+          </Button>
         </div>
       </div>
 

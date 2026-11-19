@@ -5,6 +5,8 @@
 import type {
   AspectRatio,
   MediaKind,
+  MediaSourceType,
+  ProductSourceType,
   ProductStatus,
   PublishMode,
   PublishStatus,
@@ -72,11 +74,25 @@ export const VIDEO_MODE_META: Record<
 };
 
 export const MEDIA_KIND_LABEL: Record<MediaKind, string> = {
-  product_image: 'Ảnh sản phẩm',
-  ai_image: 'Ảnh AI',
-  video: 'Video',
-  audio: 'Âm thanh',
-  thumbnail: 'Thumbnail',
+  ORIGINAL_IMAGE: 'Ảnh sản phẩm',
+  AI_IMAGE: 'Ảnh AI',
+  VIDEO: 'Video',
+  AUDIO: 'Âm thanh',
+  THUMBNAIL: 'Thumbnail',
+};
+
+export const PRODUCT_SOURCE_LABEL: Record<ProductSourceType, string> = {
+  manual: 'Nhập thủ công',
+  import_csv: 'Import CSV',
+  import_xlsx: 'Import Excel',
+  seed: 'Dữ liệu MẪU (seed)',
+};
+
+export const MEDIA_SOURCE_LABEL: Record<MediaSourceType, string> = {
+  upload: 'Tải lên',
+  import_url: 'Tải từ URL',
+  generated: 'Do AI tạo',
+  seed: 'Dữ liệu mẫu',
 };
 
 export const ASPECT_RATIO_LABEL: Record<AspectRatio, string> = {

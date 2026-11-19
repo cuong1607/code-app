@@ -1,0 +1,9 @@
+{
+  "extends": "@acs/config/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src", "vitest.config.mts"]
+}

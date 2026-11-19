@@ -1,0 +1,45 @@
+{
+  "name": "ai-content-studio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AI CONTENT STUDIO - monorepo (web, api, worker)",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build:packages": "pnpm --filter @acs/shared build",
+    "dev": "pnpm build:packages && pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm build:packages && pnpm --filter @acs/web dev",
+    "dev:api": "pnpm build:packages && pnpm --filter @acs/api dev",
+    "dev:worker": "pnpm build:packages && pnpm --filter @acs/worker dev",
+    "build": "pnpm -r build",
+    "start:api": "pnpm --filter @acs/api start",
+    "start:worker": "pnpm --filter @acs/worker start",
+    "start:web": "pnpm --filter @acs/web start",
+    "lint": "pnpm build:packages && pnpm -r lint",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "test": "pnpm build:packages && pnpm -r test",
+    "test:e2e": "pnpm --filter @acs/web build && pnpm --filter @acs/web test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "infra:up": "docker compose -f infra/docker-compose.yml --env-file .env up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml --env-file .env down",
+    "infra:ps": "docker compose -f infra/docker-compose.yml --env-file .env ps",
+    "infra:logs": "docker compose -f infra/docker-compose.yml --env-file .env logs -f",
+    "infra:config": "docker compose -f infra/docker-compose.yml --env-file .env config",
+    "db:generate": "pnpm --filter @acs/api prisma:generate",
+    "db:migrate": "pnpm --filter @acs/api prisma:migrate",
+    "db:deploy": "pnpm --filter @acs/api prisma:deploy",
+    "db:studio": "pnpm --filter @acs/api prisma:studio",
+    "db:validate": "pnpm --filter @acs/api prisma:validate",
+    "health": "node scripts/check-health.mjs"
+  },
+  "devDependencies": {
+    "@acs/config": "workspace:*",
+    "prettier": "^3.10.1",
+    "typescript": "~5.9.3"
+  }
+}

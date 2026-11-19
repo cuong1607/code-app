@@ -1,0 +1,18 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 10 chặn lifecycle scripts mặc định. Chỉ cho phép các gói cần build native/engine.
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@swc/core'
+  - '@tailwindcss/oxide'
+  - esbuild
+  - prisma
+  - sharp
+  - unrs-resolver
+
+# Gói native tuỳ chọn (có fallback JS) -> không cần chạy build script
+ignoredBuiltDependencies:
+  - msgpackr-extract

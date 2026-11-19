@@ -1,0 +1,10 @@
+# Chuẩn hoá line ending LF để Windows / WSL2 / Docker dùng chung không bị lệch
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.mp3 binary
+*.wav binary

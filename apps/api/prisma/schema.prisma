@@ -1,0 +1,21 @@
+// Prisma schema - AI CONTENT STUDIO
+// QUY TẮC: mọi cột thời gian dùng @db.Timestamptz(3) và được lưu ở UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Cấu hình hệ thống dạng key/value (hạ tầng của giai đoạn 00, chưa có UI quản lý).
+model SystemSetting {
+  key       String   @id @db.VarChar(120)
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("system_settings")
+}

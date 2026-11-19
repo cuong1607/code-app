@@ -1,0 +1,10 @@
+{
+  "extends": "@acs/config/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src", "test", "vitest.config.mts"]
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "@acs/config/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declarationMap": true,
+    "incremental": false
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

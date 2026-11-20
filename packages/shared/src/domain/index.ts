@@ -1,5 +1,6 @@
 export * from './dashboard';
 export * from './drafts';
+export * from './image-engine';
 export * from './import';
 export * from './media';
 export * from './product';

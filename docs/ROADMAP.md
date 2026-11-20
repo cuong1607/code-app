@@ -223,9 +223,25 @@ Ghi chú kỹ thuật GĐ 03:
 - Model chưa xem ảnh sản phẩm (chỉ dùng văn bản + số ảnh); phát hiện bịa đặt bằng luật (giá, khuyến mãi, từ tuyệt đối),
   không thay được kiểm duyệt của con người.
 
-## Giai đoạn 04 – Ảnh AI (⬜)
+## Giai đoạn 04 – AI Image Studio cho Nhà cửa & Đời sống (🟡 đang triển khai)
 
-- Triển khai `ImageProvider`, queue `image`, lưu kết quả vào MinIO.
+Bắt đầu: 2026-11-20 (UTC). Checkpoint trước khi sửa: tag `checkpoint-before-phase-04` (= commit `1ff032f`).
+Phase 03 vẫn 🟡 (chưa xác minh với AI thật) – không đổi trạng thái.
+
+### Milestone 04A – Home & Living Templates (✅ code + unit test)
+
+| #   | Hạng mục                                                                                                                                                                                                                                                                                                      | Trạng thái | Cách kiểm chứng                                                          |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------ |
+| 1   | Schema dùng chung `packages/shared/src/domain/image-engine.ts`: nhóm/loại Home & Living (12 loại), chế độ A–F, tỷ lệ 1:1/4:5/9:16/16:9, số ảnh 1/3/5, 5 phong cách, template DTO                                                                                                                              | ✅         | `pnpm check`                                                             |
+| 2   | `ProductVisualContext` (`apps/api/src/ai/image/visual-context.ts`): nhận diện loại từ thuộc tính "Loại" > tên > danh mục; dữ kiện chỉ từ thuộc tính DB (ghi tên thuộc tính gốc); số lượng thành phần chỉ khi có số rõ ("1 ga, 2 vỏ gối"); thiếu → `missing`; `imageAnalysis: 'none'`                          | ✅         | Unit (14 tên sản phẩm thực tế, không suy đoán, bỏ giá vốn)               |
+| 3   | 10 template chuyên ngành phiên bản hoá (ID, tên VN, mô tả, nhóm áp dụng/loại trừ, prompt cơ sở, negative constraints, tỷ lệ gợi ý, loại ảnh tham chiếu, chế độ hỗ trợ)                                                                                                                                        | ✅         | Unit: schema, id duy nhất, mỗi chế độ có template chung                  |
+| 4   | Template Selector: áp dụng/gợi ý/lý do không áp dụng theo loại sản phẩm + chế độ                                                                                                                                                                                                                              | ✅         | Unit (thảm phòng khách, thảm chùi chân, bộ ga, chiếu, chưa rõ)           |
+| 5   | Prompt Builder 10 phần (tiếng Anh cho model ảnh, quy tắc/cảnh báo tiếng Việt cho UI): giữ màu/họa tiết/đường may/hình dáng/cấu trúc/số lượng/tỷ lệ/logo; thay đổi được phép theo chế độ; chừa vùng chữ cho ảnh quảng cáo; negative prompt tách riêng hoặc ghi `AVOID` tuỳ provider; biến thể góc máy/ánh sáng | ✅         | Unit (8 test, gồm prompt injection trong thuộc tính & prompt người dùng) |
+
+Ghi chú: Mode F (ghép ảnh gốc) không dùng prompt AI – builder từ chối, xử lý ảnh truyền thống ở 04B.
+Test phát hiện và đã sửa: giá trị thuộc tính chèn vào khối MUST PRESERVE chưa escape `<`/`>`.
+
+**Kết quả 04A:** `pnpm check` exit 0 – 207 unit test (api 117 = 97 + 20 mới).
 
 ## Giai đoạn 05 – Giọng đọc tiếng Việt (⬜)
 

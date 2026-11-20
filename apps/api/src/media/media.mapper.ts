@@ -3,7 +3,7 @@ import type { MediaAsset } from '@acs/shared';
 import type { StorageService } from '../storage/storage.service';
 
 export const PREVIEW_URL_TTL_SEC = 15 * 60;
-const PREVIEWABLE = new Set(['ORIGINAL_IMAGE', 'AI_IMAGE', 'THUMBNAIL']);
+const PREVIEWABLE = new Set(['ORIGINAL_IMAGE', 'AI_IMAGE', 'COMPOSED_IMAGE', 'THUMBNAIL']);
 
 export type MediaRowWithCount = MediaAssetRow & { _count?: { products: number } };
 
@@ -30,6 +30,7 @@ export async function toMediaDto(
     metadata: (row.metadata ?? {}) as Record<string, unknown>,
     previewUrl,
     linkedProductCount: row._count?.products ?? 0,
+    inLibrary: row.libraryVisible,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

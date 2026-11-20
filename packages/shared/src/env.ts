@@ -80,6 +80,31 @@ const aiScriptEnvSchema = z.object({
   AI_MOCK_PROVIDER_ENABLED: booleanFromString.default(false),
 });
 
+/** Cấu hình AI Image Studio (Phase 04) – chỉ ở server. Key Gemini dùng GOOGLE_API_KEY. */
+const aiImageEnvSchema = z.object({
+  /** Model ảnh Gemini (ID theo tài liệu chính thức; đổi được mà không sửa code) */
+  GEMINI_IMAGE_MODEL: z.preprocess(emptyToUndefined, z.string().default('gemini-3.1-flash-image')),
+  GEMINI_IMAGE_MODELS: z.preprocess(
+    emptyToUndefined,
+    z.string().default('gemini-3.1-flash-image,gemini-nano-banana-2.1,gemini-3-pro-image'),
+  ),
+  GEMINI_IMAGE_SIZE: z.enum(['1K', '2K']).default('1K'),
+  /** OpenAI: model bắt buộc cấu hình (không hardcode model ID) */
+  OPENAI_IMAGE_MODEL: optionalString,
+  OPENAI_IMAGE_MODELS: optionalString,
+  OPENAI_IMAGE_QUALITY: z.enum(['low', 'medium', 'high']).default('medium'),
+  /** Đơn giá ƯỚC TÍNH mỗi ảnh OpenAI (USD). Thiếu -> không ước tính được -> từ chối tác vụ */
+  OPENAI_IMAGE_PRICE_PER_IMAGE_USD: optionalNumber,
+  IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(180_000),
+  /** Số lần chạy tối đa mỗi ảnh (gồm lần đầu) khi lỗi tạm thời */
+  IMAGE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(2),
+  IMAGE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
+  /** Số lời gọi provider ảnh tối đa / phút / provider */
+  IMAGE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(10),
+  /** Tắt để chỉ nhận job mà không xử lý (vd chạy nhiều API instance) */
+  IMAGE_WORKER_ENABLED: booleanFromString.default(true),
+});
+
 /** Workspace phát triển cố định (seed tạo sẵn). KHÔNG phải xác thực. */
 export const DEV_WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -88,6 +113,7 @@ export const apiEnvSchema = commonEnvSchema
   .extend(s3EnvSchema.shape)
   .extend(aiEnvSchema.shape)
   .extend(aiScriptEnvSchema.shape)
+  .extend(aiImageEnvSchema.shape)
   .extend({
     API_PORT: port.default(4000),
     // Mặc định chỉ nghe trên loopback: API chưa có xác thực (Phase 09)
@@ -142,7 +168,7 @@ export const apiEnvSchema = commonEnvSchema
       ctx.addIssue({
         code: 'custom',
         path: ['AI_MOCK_PROVIDER_ENABLED'],
-        message: 'Không được bật MockScriptProvider khi NODE_ENV=production',
+        message: 'Không được bật Mock provider (kịch bản/ảnh) khi NODE_ENV=production',
       });
     }
   });

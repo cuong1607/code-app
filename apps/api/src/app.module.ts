@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DraftsModule } from './drafts/drafts.module';
+import { ImagesModule } from './images/images.module';
 import { MediaModule } from './media/media.module';
 import { ProductsModule } from './products/products.module';
 import { ScriptsModule } from './scripts/scripts.module';
@@ -39,6 +40,7 @@ export class AppModule implements NestModule {
         ProductsModule,
         DraftsModule,
         ScriptsModule,
+        ImagesModule,
         SettingsModule,
         DashboardModule,
       ],

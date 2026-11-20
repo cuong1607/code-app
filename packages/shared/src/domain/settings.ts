@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { DEFAULT_DISPLAY_TIMEZONE, DEFAULT_LOCALE } from '../constants';
+import { IMAGE_ASPECTS, IMAGE_PROVIDER_IDS } from './image-engine';
 import { SCRIPT_PROVIDER_IDS } from './script-engine';
 import { ASPECT_RATIOS, VIDEO_DURATIONS, VIDEO_MODES, VIDEO_QUALITIES } from './video';
+
+const IMAGE_DEFAULTS = {
+  defaultProvider: null,
+  defaultAspect: '9:16' as const,
+  requireApprovalForVideo: true,
+};
 
 const AI_DEFAULTS = {
   defaultProvider: null,
@@ -97,6 +104,17 @@ export const appPreferencesSchema = z
       })
       .strict()
       .default(AI_DEFAULTS),
+    /** AI Image Studio (Phase 04). */
+    images: z
+      .object({
+        /** null = AI_IMAGE_PROVIDER ở server, hoặc provider đầu tiên đã cấu hình */
+        defaultProvider: z.enum(IMAGE_PROVIDER_IDS).nullable().default(null),
+        defaultAspect: z.enum(IMAGE_ASPECTS).default('9:16'),
+        /** Bật kiểm duyệt: chỉ ảnh AI ĐÃ DUYỆT mới được dùng làm đầu vào video */
+        requireApprovalForVideo: z.boolean().default(true),
+      })
+      .strict()
+      .default(IMAGE_DEFAULTS),
   })
   .strict();
 export type AppPreferences = z.infer<typeof appPreferencesSchema>;

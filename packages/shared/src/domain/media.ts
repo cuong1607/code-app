@@ -2,7 +2,15 @@ import { z } from 'zod';
 import { paginationQuerySchema } from '../pagination';
 
 /** Phân loại tài nguyên (khớp enum Prisma `MediaAssetType`). */
-export const MEDIA_KINDS = ['ORIGINAL_IMAGE', 'AI_IMAGE', 'VIDEO', 'AUDIO', 'THUMBNAIL'] as const;
+export const MEDIA_KINDS = [
+  'ORIGINAL_IMAGE',
+  'AI_IMAGE',
+  /** Ảnh ghép từ ảnh gốc bằng xử lý ảnh truyền thống (Phase 04 – Mode F, KHÔNG phải AI) */
+  'COMPOSED_IMAGE',
+  'VIDEO',
+  'AUDIO',
+  'THUMBNAIL',
+] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 export type MediaAssetType = MediaKind;
 
@@ -54,6 +62,8 @@ export const mediaAssetSchema = z.object({
   /** URL xem trước có hạn (presigned GET) */
   previewUrl: z.string().nullable(),
   linkedProductCount: z.number().int().nonnegative(),
+  /** false = ảnh tạo trong Image Studio chưa được "Lưu vào thư viện" */
+  inLibrary: z.boolean(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

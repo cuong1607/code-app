@@ -80,6 +80,7 @@ export const VIDEO_MODE_META: Record<
 export const MEDIA_KIND_LABEL: Record<MediaKind, string> = {
   ORIGINAL_IMAGE: 'Ảnh sản phẩm',
   AI_IMAGE: 'Ảnh AI',
+  COMPOSED_IMAGE: 'Ảnh ghép (không AI)',
   VIDEO: 'Video',
   AUDIO: 'Âm thanh',
   THUMBNAIL: 'Thumbnail',

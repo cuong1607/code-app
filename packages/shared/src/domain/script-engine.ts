@@ -526,6 +526,7 @@ export const AI_FEATURES = [
   'scene_regenerate',
   'caption_generate',
   'provider_check',
+  'image_generate',
 ] as const;
 export const AI_USAGE_STATUSES = [
   'success',

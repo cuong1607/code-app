@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { paginationQuerySchema } from '../pagination';
+import { mediaAssetSchema } from './media';
 
 /**
  * AI IMAGE STUDIO – NHÀ CỬA & ĐỜI SỐNG (Phase 04) – schema dùng chung giữa API, worker và web.
@@ -311,3 +313,281 @@ export const imagePromptSchema = z.object({
   warnings: z.array(z.string()),
 });
 export type ImagePrompt = z.infer<typeof imagePromptSchema>;
+
+// ------------------------------------------------------------------ Provider
+/** Provider AI tạo ảnh. Mode F dùng bộ ghép ảnh "composition" (không phải AI, không nằm trong danh sách này). */
+export const IMAGE_PROVIDER_IDS = ['gemini', 'openai', 'mock'] as const;
+export type ImageProviderId = (typeof IMAGE_PROVIDER_IDS)[number];
+export const COMPOSITION_ENGINE_ID = 'composition' as const;
+
+export const imageProviderModelSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  pricePerImageUsd: z.string().nullable(),
+  pricingKnown: z.boolean(),
+  pricingSource: z.string(),
+  maxReferenceImages: z.number().int(),
+  nativeAspects: z.array(z.enum(IMAGE_ASPECTS)),
+  negativePrompt: z.boolean(),
+  resolution: z.string(),
+  notes: z.array(z.string()),
+});
+export type ImageProviderModel = z.infer<typeof imageProviderModelSchema>;
+
+export const imageProviderStatusSchema = z.object({
+  id: z.enum(IMAGE_PROVIDER_IDS),
+  displayName: z.string(),
+  isMock: z.boolean(),
+  status: z.enum(['ready', 'not_configured', 'disabled']),
+  message: z.string(),
+  envVars: z.array(z.string()),
+  defaultModel: z.string().nullable(),
+  models: z.array(imageProviderModelSchema),
+});
+export type ImageProviderStatus = z.infer<typeof imageProviderStatusSchema>;
+
+export const imageProvidersResponseSchema = z.object({
+  defaultProvider: z.enum(IMAGE_PROVIDER_IDS).nullable(),
+  providers: z.array(imageProviderStatusSchema),
+});
+export type ImageProvidersResponse = z.infer<typeof imageProvidersResponseSchema>;
+
+export const imageProviderCheckSchema = z.object({
+  id: z.enum(IMAGE_PROVIDER_IDS),
+  ok: z.boolean(),
+  message: z.string(),
+  model: z.string().nullable(),
+  checkedAt: z.iso.datetime(),
+});
+export type ImageProviderCheck = z.infer<typeof imageProviderCheckSchema>;
+
+// ------------------------------------------------------------------ Job & item
+export const IMAGE_JOB_STATUSES = [
+  'QUEUED',
+  'RUNNING',
+  'WAITING_PROVIDER',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+] as const;
+export type ImageJobStatus = (typeof IMAGE_JOB_STATUSES)[number];
+export const IMAGE_JOB_ACTIVE_STATUSES: readonly ImageJobStatus[] = [
+  'QUEUED',
+  'RUNNING',
+  'WAITING_PROVIDER',
+];
+
+/** Giai đoạn xử lý (hiển thị thay cho phần trăm – provider không trả tiến độ %). */
+export const IMAGE_ITEM_STAGES = [
+  'queued',
+  'loading_references',
+  'calling_provider',
+  'post_processing',
+  'saving',
+  'done',
+  'failed',
+  'cancelled',
+] as const;
+export type ImageItemStage = (typeof IMAGE_ITEM_STAGES)[number];
+
+export const IMAGE_APPROVAL_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type ImageApprovalStatus = (typeof IMAGE_APPROVAL_STATUSES)[number];
+
+/** Cờ người duyệt gắn khi ảnh có nguy cơ sai sản phẩm. */
+export const IMAGE_REVIEW_FLAGS = [
+  'color_mismatch',
+  'pattern_mismatch',
+  'shape_mismatch',
+  'wrong_item_count',
+  'extra_items',
+  'distorted',
+  'text_artifacts',
+  'other',
+] as const;
+export type ImageReviewFlag = (typeof IMAGE_REVIEW_FLAGS)[number];
+export const IMAGE_REVIEW_FLAG_LABEL: Record<ImageReviewFlag, string> = {
+  color_mismatch: 'Sai màu',
+  pattern_mismatch: 'Sai họa tiết/hoa văn',
+  shape_mismatch: 'Sai hình dáng/cấu trúc',
+  wrong_item_count: 'Sai số lượng thành phần',
+  extra_items: 'Thêm vật phẩm dễ nhầm là đi kèm',
+  distorted: 'Méo/tỷ lệ bất thường',
+  text_artifacts: 'Có chữ/logo lạ',
+  other: 'Lý do khác',
+};
+
+export const imageGenerateRequestSchema = z
+  .object({
+    productId: z.uuid('Sản phẩm không hợp lệ'),
+    referenceAssetIds: z
+      .array(z.uuid())
+      .min(1, 'Chọn ít nhất 1 ảnh tham chiếu của sản phẩm')
+      .max(10, 'Tối đa 10 ảnh tham chiếu'),
+    mode: z.enum(IMAGE_MODES),
+    templateId: z.string().min(1).max(60),
+    styleId: z.string().max(60).nullish(),
+    aspect: z.enum(IMAGE_ASPECTS).default(DEFAULT_IMAGE_ASPECT),
+    count: z.union([z.literal(1), z.literal(3), z.literal(5)]).default(1),
+    provider: z.enum(IMAGE_PROVIDER_IDS).nullish(),
+    model: z.string().max(100).nullish(),
+    userPrompt: z.string().max(1000, 'Prompt tối đa 1000 ký tự').nullish(),
+    /** Mode F: màu nền (hex) */
+    backgroundColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'Màu nền dạng #RRGGBB')
+      .nullish(),
+    /** Client sinh 1 lần cho mỗi lần bấm "Tạo" – gửi lại (refresh/double-click) không tạo job trùng */
+    idempotencyKey: z.uuid('Thiếu idempotencyKey'),
+  })
+  .strict();
+export type ImageGenerateRequest = z.infer<typeof imageGenerateRequestSchema>;
+export type ImageGenerateRequestInput = z.input<typeof imageGenerateRequestSchema>;
+
+export const imageEstimateRequestSchema = imageGenerateRequestSchema
+  .omit({ idempotencyKey: true })
+  .extend({ idempotencyKey: z.uuid().optional() });
+
+export const imageEstimateSchema = z.object({
+  usesAi: z.boolean(),
+  provider: z.string(),
+  model: z.string(),
+  isMock: z.boolean(),
+  count: z.number().int(),
+  pricePerImageUsd: z.string().nullable(),
+  estimatedCostUsd: z.string().nullable(),
+  pricingKnown: z.boolean(),
+  pricingSource: z.string(),
+  allowed: z.boolean(),
+  reason: z.string().nullable(),
+  remainingDailyUsd: z.string(),
+  /** Prompt dự kiến cho ảnh đầu tiên (để người dùng xem trước) */
+  promptPreview: imagePromptSchema.nullable(),
+  /** Cách xử lý tỷ lệ nếu provider không tạo trực tiếp */
+  aspectHandling: z.enum(['native', 'pad']),
+});
+export type ImageEstimate = z.infer<typeof imageEstimateSchema>;
+
+export const imageFitSchema = z.object({
+  mode: z.enum(['none', 'pad']),
+  providerWidth: z.number().int(),
+  providerHeight: z.number().int(),
+  finalWidth: z.number().int(),
+  finalHeight: z.number().int(),
+});
+
+/** Kiểm tra TỰ ĐỘNG (tham khảo) – KHÔNG bảo đảm giữ đúng sản phẩm. */
+export const imageAutoCheckSchema = z.object({
+  /** Tỷ lệ màu chủ đạo của ảnh gốc xuất hiện trong ảnh mới (0–1); null nếu không tính được */
+  colorCoverage: z.number().min(0).max(1).nullable(),
+  referencePalette: z.array(z.string()),
+  outputPalette: z.array(z.string()),
+  fit: imageFitSchema,
+  /** Ghi chú tiếng Việt (vd "đã thêm viền để đúng tỷ lệ") */
+  notes: z.array(z.string()),
+  /** Cờ tự động: color_low | aspect_padded | provider_note */
+  flags: z.array(z.string()),
+  method: z.string(),
+});
+export type ImageAutoCheck = z.infer<typeof imageAutoCheckSchema>;
+
+export const imageItemSchema = z.object({
+  id: z.uuid(),
+  jobId: z.uuid(),
+  index: z.number().int(),
+  status: z.enum(IMAGE_JOB_STATUSES),
+  stage: z.enum(IMAGE_ITEM_STAGES),
+  attempts: z.number().int(),
+  prompt: z.string().nullable(),
+  preserveRules: z.array(z.string()),
+  allowedChanges: z.array(z.string()),
+  warnings: z.array(z.string()),
+  variationIndex: z.number().int(),
+  asset: mediaAssetSchema.nullable(),
+  approvalStatus: z.enum(IMAGE_APPROVAL_STATUSES),
+  reviewNote: z.string().nullable(),
+  reviewFlags: z.array(z.enum(IMAGE_REVIEW_FLAGS)),
+  reviewedAt: z.iso.datetime().nullable(),
+  autoCheck: imageAutoCheckSchema.nullable(),
+  savedToLibrary: z.boolean(),
+  linkedToProduct: z.boolean(),
+  regeneratedFromId: z.uuid().nullable(),
+  estimatedCostUsd: z.string().nullable(),
+  latencyMs: z.number().int().nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable(),
+});
+export type ImageItem = z.infer<typeof imageItemSchema>;
+
+export const imageJobCountsSchema = z.object({
+  total: z.number().int(),
+  queued: z.number().int(),
+  running: z.number().int(),
+  completed: z.number().int(),
+  failed: z.number().int(),
+  cancelled: z.number().int(),
+  approved: z.number().int(),
+  rejected: z.number().int(),
+});
+
+export const imageJobSchema = z.object({
+  id: z.uuid(),
+  productId: z.uuid().nullable(),
+  productName: z.string(),
+  mode: z.enum(IMAGE_MODES),
+  usesAi: z.boolean(),
+  templateId: z.string(),
+  templateName: z.string(),
+  templateVersion: z.string(),
+  styleId: z.string().nullable(),
+  aspect: z.enum(IMAGE_ASPECTS),
+  requestedCount: z.number().int(),
+  provider: z.string(),
+  model: z.string(),
+  isMock: z.boolean(),
+  userPrompt: z.string().nullable(),
+  status: z.enum(IMAGE_JOB_STATUSES),
+  counts: imageJobCountsSchema,
+  estimatedCostUsd: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  startedAt: z.iso.datetime().nullable(),
+  finishedAt: z.iso.datetime().nullable(),
+});
+export type ImageJob = z.infer<typeof imageJobSchema>;
+
+export const imageJobDetailSchema = imageJobSchema.extend({
+  references: z.array(mediaAssetSchema),
+  items: z.array(imageItemSchema),
+  visualContext: productVisualContextSchema.nullable(),
+});
+export type ImageJobDetail = z.infer<typeof imageJobDetailSchema>;
+
+export const imageJobListQuerySchema = paginationQuerySchema.extend({
+  productId: z
+    .uuid()
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+  status: z
+    .enum(IMAGE_JOB_STATUSES)
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+});
+export type ImageJobListQuery = z.infer<typeof imageJobListQuerySchema>;
+
+export const imageReviewSchema = z
+  .object({
+    note: z.string().trim().max(500, 'Ghi chú tối đa 500 ký tự').nullish(),
+    flags: z.array(z.enum(IMAGE_REVIEW_FLAGS)).max(IMAGE_REVIEW_FLAGS.length).default([]),
+  })
+  .strict();
+export type ImageReviewInput = z.infer<typeof imageReviewSchema>;
+
+/** Ngữ cảnh ảnh của sản phẩm cho UI: dữ kiện thị giác + ảnh tham chiếu + template phù hợp */
+export const imageProductContextSchema = z.object({
+  visualContext: productVisualContextSchema,
+  references: z.array(mediaAssetSchema),
+  templates: z.array(imageTemplateMatchSchema),
+});
+export type ImageProductContext = z.infer<typeof imageProductContextSchema>;

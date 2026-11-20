@@ -17,6 +17,7 @@ import {
 import { isUniqueViolation } from '../common/prisma-errors';
 import { toMediaDto } from '../media/media.mapper';
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsService } from '../settings/settings.service';
 import { StorageService } from '../storage/storage.service';
 
 type VideoUpdate = z.output<typeof videoDraftUpdateSchema>;
@@ -30,6 +31,7 @@ export class DraftsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly settings: SettingsService,
   ) {}
 
   // ================================================================== Video Factory
@@ -68,6 +70,30 @@ export class DraftsService {
     };
   }
 
+  /**
+   * Chế độ kiểm duyệt (Cài đặt › images.requireApprovalForVideo, mặc định BẬT):
+   * ảnh tạo ở Image Studio chỉ được dùng cho video khi đã được DUYỆT.
+   */
+  private async assertApprovedForVideo(ws: string, mediaIds: string[]) {
+    if (!mediaIds.length) return;
+    const prefs = (await this.settings.get(ws)).preferences;
+    if (!prefs.images.requireApprovalForVideo) return;
+    const notApproved = await this.prisma.imageGenerationItem.count({
+      where: {
+        workspaceId: ws,
+        mediaAssetId: { in: mediaIds },
+        approvalStatus: { not: 'approved' },
+      },
+    });
+    if (notApproved > 0) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `Có ${notApproved} ảnh từ Image Studio chưa được duyệt. Hãy duyệt ảnh (so sánh với ảnh gốc) trước khi dùng cho video, hoặc tắt chế độ kiểm duyệt trong Cài đặt.`,
+        [{ path: 'mediaAssetIds', message: 'Ảnh chưa được duyệt' }],
+      );
+    }
+  }
+
   async listVideo(ws: string): Promise<VideoDraft[]> {
     const rows = await this.prisma.videoDraft.findMany({
       where: { workspaceId: ws },
@@ -94,6 +120,7 @@ export class DraftsService {
     });
     if (owned !== mediaIds.length)
       throw new AppError('NOT_FOUND', 'Có ảnh không tồn tại trong workspace');
+    await this.assertApprovedForVideo(ws, mediaIds);
     const scriptIds = [
       ...new Set(drafts.map((d) => d.scriptId).filter((id): id is string => Boolean(id))),
     ];

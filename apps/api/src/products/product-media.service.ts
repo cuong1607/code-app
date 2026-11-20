@@ -33,7 +33,9 @@ export class ProductMediaService {
     });
     if (assets.length !== ids.length)
       throw new AppError('NOT_FOUND', 'Một số ảnh không tồn tại trong workspace');
-    if (assets.some((a) => !['ORIGINAL_IMAGE', 'AI_IMAGE'].includes(a.assetType))) {
+    if (
+      assets.some((a) => !['ORIGINAL_IMAGE', 'AI_IMAGE', 'COMPOSED_IMAGE'].includes(a.assetType))
+    ) {
       throw new AppError('VALIDATION_ERROR', 'Chỉ gắn được ảnh vào sản phẩm');
     }
     await this.prisma.$transaction(async (tx) => {

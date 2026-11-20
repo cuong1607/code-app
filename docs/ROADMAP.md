@@ -243,6 +243,33 @@ Test phát hiện và đã sửa: giá trị thuộc tính chèn vào khối MUS
 
 **Kết quả 04A:** `pnpm check` exit 0 – 207 unit test (api 117 = 97 + 20 mới).
 
+### Milestone 04B – Image Provider & Backend (✅ code + test với Mock; 🟡 provider thật chưa xác minh)
+
+Tra cứu tài liệu chính thức 2026-11-20 (Google AI image generation + pricing, OpenAI image generation + pricing) và
+kiểm tra kiểu SDK (`@google/genai` 3.6.1, `openai` 7.60) trước khi viết adapter.
+
+| #   | Hạng mục                                                                                                                                                                                                                     | Trạng thái | Cách kiểm chứng                                                                                   |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| 1   | `ImageProvider` interface (`generateImage`, `editImage`, `generateVariations`, `getCapabilities`, `getJobStatus?`, `validateConfiguration`)                                                                                  | ✅         | `packages/shared/src/providers/image.ts`                                                          |
+| 2   | `GeminiImageProvider` (`interactions.create`, ảnh inline base64, `response_format` aspect_ratio/image_size, `store:false`, tắt retry SDK; model mặc định `gemini-3.1-flash-image`)                                           | 🟡         | Unit với client giả (tham số, phân loại lỗi, refusal). **Chưa gọi thật – chưa có GOOGLE_API_KEY** |
+| 3   | `OpenAIImageProvider` (`images.edit` nhiều ảnh, kích thước đúng tỷ lệ theo ràng buộc tài liệu, model + đơn giá bắt buộc qua env)                                                                                             | 🟡         | Unit với client giả. **Chưa gọi thật**                                                            |
+| 4   | `MockImageProvider` (ảnh PNG thật có dải "MOCK – KHÔNG PHẢI ẢNH AI", hành vi lỗi giả lập, cấm production)                                                                                                                    | ✅         | Unit + Integration                                                                                |
+| 5   | DB: `image_generation_jobs`, `image_generation_items`, `media_assets.library_visible`, `media_asset_type += COMPOSED_IMAGE`, `ai_usage += image_job_id/image_item_id/images_requested/images_succeeded` – migration chỉ thêm | ✅         | `pnpm db:migrate`, SQL không có DROP                                                              |
+| 6   | Queue `image` (BullMQ): 1 ảnh = 1 job, jobId cố định (không trùng), concurrency, rate limit/provider, retry có giới hạn + backoff, timeout, idempotencyKey, khôi phục sau restart (reconcile khi khởi động + mỗi phút)       | ✅         | Integration: worker BullMQ thật + giả lập tiến trình chết                                         |
+| 7   | Lưu MinIO + MediaAsset (nguồn gốc: sản phẩm, template, provider, model, prompt, cài đặt, chi phí, ảnh gốc); không ghi đè ảnh gốc; lỗi DB -> xoá object                                                                       | ✅         | Integration: SHA-256 ảnh gốc không đổi; dữ liệu hỏng không để object mồ côi                       |
+| 8   | API `/images`: templates, providers (+check), context sản phẩm, estimate, jobs (tạo/danh sách/chi tiết/huỷ), items (approve/reject/regenerate/save/link-product/download-url)                                                | ✅         | Integration 19 test                                                                               |
+| 9   | Ngân sách: đơn giá/ảnh (Gemini bảng tham khảo +15%, OpenAI bắt buộc env), thiếu đơn giá -> 402, ngân sách lần tạo/ngày/tháng tính cả ảnh đang xếp hàng; ai_usage mỗi lời gọi (lỗi -> chi phí `null`, không ghi 0)            | ✅         | Integration (402 không gọi provider)                                                              |
+| 10  | Mode F ghép ảnh gốc bằng sharp (`COMPOSED_IMAGE`, không AI, không ai_usage)                                                                                                                                                  | ✅         | Unit (điểm ảnh sản phẩm giữ nguyên) + Integration                                                 |
+| 11  | Tỷ lệ: lệch ≤1,5% giữ nguyên, lệch hơn -> PAD (ghi trong autoCheck.fit + cờ `aspect_padded`), không kéo méo                                                                                                                  | ✅         | Unit + Integration                                                                                |
+| 12  | Kiểm tra màu tự động (tham khảo): ΔE CIE76 bảng màu ảnh gốc (loại màu nền) so với ảnh mới -> `colorCoverage`, cờ `color_low`                                                                                                 | ✅         | Unit (giữ màu ≥ 0,8; đổi màu < 0,5) – **không** bảo đảm đúng sản phẩm                             |
+| 13  | Video Factory: chế độ kiểm duyệt (mặc định bật) chặn ảnh Image Studio chưa duyệt                                                                                                                                             | ✅         | Integration 422 / 201                                                                             |
+
+**Kết quả 04B:** `pnpm check` exit 0 – **237 unit** (shared 63, api 146, web 24, worker 4) · `pnpm test:integration`
+**65/65** (46 cũ + 19 mới) · `pnpm build` exit 0.
+
+Quyết định: consumer hàng đợi ảnh chạy **trong tiến trình API** (dùng lại Prisma/Storage/AiUsage/Registry) thay vì
+`apps/worker` (chưa có Prisma/S3) – ghi ở ARCHITECTURE. `IMAGE_WORKER_ENABLED=false` để tách khi cần.
+
 ## Giai đoạn 05 – Giọng đọc tiếng Việt (⬜)
 
 - Triển khai `TextToSpeechProvider`, chọn voice, nghe thử, lưu audio.

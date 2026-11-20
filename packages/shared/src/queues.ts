@@ -6,6 +6,8 @@ import { z } from 'zod';
  */
 export const QUEUE_NAMES = {
   system: 'system',
+  /** Phase 04: tạo ảnh AI – mỗi job = 1 ảnh (image_generation_items) */
+  image: 'image',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -26,3 +28,20 @@ export const systemPingResultSchema = z.object({
   roundTripMs: z.number().nonnegative(),
 });
 export type SystemPingResult = z.infer<typeof systemPingResultSchema>;
+
+export const IMAGE_JOBS = {
+  generateItem: 'image.generate-item',
+} as const;
+
+/** Payload chỉ chứa ID – dữ liệu thật đọc từ DB (luôn lọc theo workspace). */
+export const imageGenerateItemPayloadSchema = z
+  .object({
+    workspaceId: z.uuid(),
+    jobId: z.uuid(),
+    itemId: z.uuid(),
+  })
+  .strict();
+export type ImageGenerateItemPayload = z.infer<typeof imageGenerateItemPayloadSchema>;
+
+/** ID job BullMQ cố định theo item -> thêm lại (refresh/khôi phục) không tạo job trùng. */
+export const imageQueueJobId = (itemId: string) => `img-item-${itemId}`;

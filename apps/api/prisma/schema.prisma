@@ -43,6 +43,8 @@ model Workspace {
   scriptDrafts     ScriptDraft[]
   promptPresets    PromptPreset[]
   aiUsages         AiUsage[]
+  imageJobs        ImageGenerationJob[]
+  imageItems       ImageGenerationItem[]
 
   @@map("workspaces")
 }
@@ -109,6 +111,7 @@ model Product {
   media        ProductMedia[]
   videoDrafts  VideoDraft[]
   scriptDrafts ScriptDraft[]
+  imageJobs    ImageGenerationJob[]
 
   @@unique([workspaceId, sku])
   @@index([workspaceId, status])
@@ -122,6 +125,8 @@ model Product {
 enum MediaAssetType {
   ORIGINAL_IMAGE
   AI_IMAGE
+  /// Ảnh ghép từ ảnh gốc bằng xử lý ảnh truyền thống (Mode F) – KHÔNG phải AI
+  COMPOSED_IMAGE
   VIDEO
   AUDIO
   THUMBNAIL
@@ -157,11 +162,14 @@ model MediaAsset {
   sourceUrl        String?         @map("source_url") @db.VarChar(2048)
   metadata         Json            @default("{}")
   searchText       String          @default("") @map("search_text")
+  /// false = ảnh tạo ở Image Studio chưa được "Lưu vào thư viện" (vẫn nằm trong MinIO)
+  libraryVisible   Boolean         @default(true) @map("library_visible")
   createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  products  ProductMedia[]
+  workspace  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  products   ProductMedia[]
+  imageItems ImageGenerationItem[]
 
   @@unique([bucket, storageKey])
   /// Phát hiện file trùng theo nội dung trong cùng workspace
@@ -367,6 +375,11 @@ model AiUsage {
   actualCostUsd    Decimal?  @map("actual_cost_usd") @db.Decimal(12, 6)
   latencyMs        Int?      @map("latency_ms")
   errorCode        String?   @map("error_code") @db.VarChar(60)
+  /// Phase 04: tác vụ ảnh + số ảnh yêu cầu / thành công trong lời gọi này
+  imageJobId       String?   @map("image_job_id") @db.Uuid
+  imageItemId      String?   @map("image_item_id") @db.Uuid
+  imagesRequested  Int?      @map("images_requested")
+  imagesSucceeded  Int?      @map("images_succeeded")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -374,7 +387,114 @@ model AiUsage {
 
   @@index([workspaceId, createdAt])
   @@index([generationId])
+  @@index([imageJobId])
   @@map("ai_usage")
+}
+
+// ============================================================ AI Image Studio (Phase 04)
+enum ImageJobStatus {
+  QUEUED
+  RUNNING
+  WAITING_PROVIDER
+  COMPLETED
+  FAILED
+  CANCELLED
+
+  @@map("image_job_status")
+}
+
+enum ImageApprovalStatus {
+  pending
+  approved
+  rejected
+
+  @@map("image_approval_status")
+}
+
+/// Một tác vụ tạo ảnh (1–5 ảnh) cho một sản phẩm. Trạng thái tổng hợp từ các item.
+model ImageGenerationJob {
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @map("workspace_id") @db.Uuid
+  productId        String?        @map("product_id") @db.Uuid
+  /// Ảnh chụp tên sản phẩm lúc tạo (giữ lại nếu sản phẩm bị xoá)
+  productName      String         @map("product_name") @db.VarChar(200)
+  /// Client gửi để bấm lại/refresh không tạo job trùng
+  idempotencyKey   String         @map("idempotency_key") @db.Uuid
+  mode             String         @db.VarChar(40)
+  templateId       String         @map("template_id") @db.VarChar(60)
+  templateVersion  String         @map("template_version") @db.VarChar(20)
+  styleId          String?        @map("style_id") @db.VarChar(60)
+  aspect           String         @db.VarChar(10)
+  requestedCount   Int            @map("requested_count")
+  /// gemini | openai | mock | composition (Mode F, không phải AI)
+  provider         String         @db.VarChar(40)
+  model            String         @db.VarChar(100)
+  userPrompt       String?        @map("user_prompt")
+  /// Ảnh sản phẩm gốc dùng làm tham chiếu (KHÔNG bị sửa/ghi đè)
+  referenceAssetIds String[]      @map("reference_asset_ids") @db.Uuid
+  /// Ảnh chụp ProductVisualContext + cấu hình tại thời điểm tạo
+  visualContext    Json           @map("visual_context")
+  settings         Json           @default("{}")
+  status           ImageJobStatus @default(QUEUED)
+  estimatedCostUsd Decimal?       @map("estimated_cost_usd") @db.Decimal(12, 6)
+  errorMessage     String?        @map("error_message") @db.VarChar(500)
+  startedAt        DateTime?      @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime?      @map("finished_at") @db.Timestamptz(3)
+  cancelledAt      DateTime?      @map("cancelled_at") @db.Timestamptz(3)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product   Product?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  items     ImageGenerationItem[]
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, productId])
+  @@index([status])
+  @@map("image_generation_jobs")
+}
+
+/// Một ảnh đầu ra của tác vụ (mỗi item = 1 job BullMQ -> lỗi 1 ảnh không làm hỏng cả batch).
+model ImageGenerationItem {
+  id                String              @id @default(uuid()) @db.Uuid
+  workspaceId       String              @map("workspace_id") @db.Uuid
+  jobId             String              @map("job_id") @db.Uuid
+  index             Int
+  variationIndex    Int                 @map("variation_index")
+  status            ImageJobStatus      @default(QUEUED)
+  /// queued | loading_references | calling_provider | post_processing | saving | done | failed | cancelled
+  stage             String              @default("queued") @db.VarChar(30)
+  attempts          Int                 @default(0)
+  prompt            String?
+  negativePrompt    String?             @map("negative_prompt")
+  /// preserveRules / allowedChanges / warnings / builderVersion
+  promptMeta        Json                @default("{}") @map("prompt_meta")
+  mediaAssetId      String?             @unique @map("media_asset_id") @db.Uuid
+  approvalStatus    ImageApprovalStatus @default(pending) @map("approval_status")
+  reviewNote        String?             @map("review_note") @db.VarChar(500)
+  reviewFlags       String[]            @default([]) @map("review_flags")
+  reviewedAt        DateTime?           @map("reviewed_at") @db.Timestamptz(3)
+  /// Kiểm tra tự động (tham khảo): bảng màu, cách pad tỷ lệ…
+  autoCheck         Json?               @map("auto_check")
+  regeneratedFromId String?             @map("regenerated_from_id") @db.Uuid
+  estimatedCostUsd  Decimal?            @map("estimated_cost_usd") @db.Decimal(12, 6)
+  latencyMs         Int?                @map("latency_ms")
+  errorCode         String?             @map("error_code") @db.VarChar(60)
+  errorMessage      String?             @map("error_message") @db.VarChar(500)
+  startedAt         DateTime?           @map("started_at") @db.Timestamptz(3)
+  completedAt       DateTime?           @map("completed_at") @db.Timestamptz(3)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job        ImageGenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset?        @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([jobId, index])
+  @@index([workspaceId, approvalStatus])
+  @@index([status])
+  @@map("image_generation_items")
 }
 
 /// Prompt người dùng lưu lại để dùng lại.

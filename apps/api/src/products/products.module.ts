@@ -11,6 +11,6 @@ import { ProductsService } from './products.service';
   // ImportController trước để /products/import/* không bị ':id' bắt nhầm
   controllers: [ImportController, ProductsController],
   providers: [ProductsService, ProductMediaService, ImportService],
-  exports: [ProductsService],
+  exports: [ProductsService, ProductMediaService],
 })
 export class ProductsModule {}

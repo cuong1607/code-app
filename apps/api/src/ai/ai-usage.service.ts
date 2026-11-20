@@ -26,7 +26,12 @@ export function startOfVnMonth(now = new Date()): Date {
 export interface UsageInput {
   provider: string;
   model: string;
-  feature: 'script_generate' | 'scene_regenerate' | 'caption_generate' | 'provider_check';
+  feature:
+    | 'script_generate'
+    | 'scene_regenerate'
+    | 'caption_generate'
+    | 'provider_check'
+    | 'image_generate';
   status: 'success' | 'failed' | 'invalid_output' | 'refused' | 'rejected_budget';
   generationId?: string | null;
   scriptDraftId?: string | null;
@@ -34,6 +39,12 @@ export interface UsageInput {
   outputTokens?: number | null;
   latencyMs?: number | null;
   errorCode?: string | null;
+  /** Ảnh: chi phí ước tính theo đơn giá/ảnh (không tính từ token) */
+  estimatedCostUsd?: number | null;
+  imageJobId?: string | null;
+  imageItemId?: string | null;
+  imagesRequested?: number | null;
+  imagesSucceeded?: number | null;
 }
 
 export interface BudgetDecision {
@@ -70,10 +81,12 @@ export class AiUsageService {
 
   async record(ws: string, u: UsageInput): Promise<string> {
     const cost =
-      (u.inputTokens !== null && u.inputTokens !== undefined) ||
-      (u.outputTokens !== null && u.outputTokens !== undefined)
-        ? this.estimateCost(u.provider, u.model, u.inputTokens ?? 0, u.outputTokens ?? 0)
-        : null;
+      u.estimatedCostUsd !== undefined
+        ? u.estimatedCostUsd
+        : (u.inputTokens !== null && u.inputTokens !== undefined) ||
+            (u.outputTokens !== null && u.outputTokens !== undefined)
+          ? this.estimateCost(u.provider, u.model, u.inputTokens ?? 0, u.outputTokens ?? 0)
+          : null;
     const row = await this.prisma.aiUsage.create({
       data: {
         workspaceId: ws,
@@ -88,6 +101,10 @@ export class AiUsageService {
         estimatedCostUsd: cost === null ? null : new Prisma.Decimal(usd(cost)),
         latencyMs: u.latencyMs ?? null,
         errorCode: u.errorCode?.slice(0, 60) ?? null,
+        imageJobId: u.imageJobId ?? null,
+        imageItemId: u.imageItemId ?? null,
+        imagesRequested: u.imagesRequested ?? null,
+        imagesSucceeded: u.imagesSucceeded ?? null,
       },
     });
     return row.id;
@@ -111,17 +128,30 @@ export class AiUsageService {
     return { cost: Number(agg._sum.estimatedCostUsd ?? 0), calls: agg._count._all };
   }
 
+  /**
+   * Chi phí ước tính của ảnh đã xếp hàng nhưng CHƯA gọi provider (đọc từ DB -> đúng cả sau khi restart).
+   * Item đang chạy đã/đang được ghi ai_usage nên chỉ tính QUEUED.
+   */
+  async pendingImageCost(ws: string): Promise<number> {
+    const agg = await this.prisma.imageGenerationItem.aggregate({
+      where: { workspaceId: ws, status: 'QUEUED' },
+      _sum: { estimatedCostUsd: true },
+    });
+    return Number(agg._sum.estimatedCostUsd ?? 0);
+  }
+
   /** Kiểm tra trước khi gọi AI. estimate = null nghĩa là không đủ thông tin để dự tính an toàn. */
   async checkBudget(
     ws: string,
     prefs: AppPreferences,
     estimate: number | null,
+    opts: { extraPendingUsd?: number } = {},
   ): Promise<BudgetDecision> {
     const [day, month] = await Promise.all([
       this.spentSince(ws, startOfVnDay()),
       this.spentSince(ws, startOfVnMonth()),
     ]);
-    const pending = this.reserved.get(ws) ?? 0;
+    const pending = (this.reserved.get(ws) ?? 0) + (opts.extraPendingUsd ?? 0);
     const remainingDailyUsd = Math.max(0, prefs.ai.dailyBudgetUsd - day.cost - pending);
     const remainingMonthlyUsd = prefs.cost.hardStop
       ? Math.max(0, prefs.cost.monthlyBudgetUsd - month.cost - pending)

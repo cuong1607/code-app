@@ -54,7 +54,20 @@ describe('env', () => {
         { ...validApiEnv, NODE_ENV: 'production', AI_MOCK_PROVIDER_ENABLED: 'true' },
         'api',
       ),
-    ).toThrow(/MockScriptProvider/);
+    ).toThrow(/Mock provider/);
+  });
+
+  it('cấu hình AI Image (Phase 04): model Gemini mặc định, OpenAI không có model/đơn giá mặc định', () => {
+    const env = parseEnv(apiEnvSchema, validApiEnv, 'api');
+    expect(env.GEMINI_IMAGE_MODEL).toBe('gemini-3.1-flash-image');
+    expect(env.GEMINI_IMAGE_SIZE).toBe('1K');
+    expect(env.OPENAI_IMAGE_MODEL).toBeUndefined();
+    expect(env.OPENAI_IMAGE_PRICE_PER_IMAGE_USD).toBeUndefined();
+    expect(env.IMAGE_MAX_ATTEMPTS).toBe(2);
+    expect(env.IMAGE_WORKER_ENABLED).toBe(true);
+    expect(() =>
+      parseEnv(apiEnvSchema, { ...validApiEnv, IMAGE_MAX_ATTEMPTS: '50' }, 'api'),
+    ).toThrow(/IMAGE_MAX_ATTEMPTS/);
   });
 
   it('mặc định chỉ nghe loopback, dev workspace cố định, tắt tải ảnh từ URL', () => {

@@ -30,6 +30,8 @@ export class MediaService {
   async list(workspaceId: string, q: MediaListQuery): Promise<Paginated<MediaAsset>> {
     const where: Prisma.MediaAssetWhereInput = {
       workspaceId,
+      // Ảnh Image Studio chưa "Lưu vào thư viện" không hiện ở Thư viện media
+      libraryVisible: true,
       ...(q.type ? { assetType: q.type } : {}),
       ...(q.search ? { searchText: { contains: normalizeSearchText(q.search) } } : {}),
     };

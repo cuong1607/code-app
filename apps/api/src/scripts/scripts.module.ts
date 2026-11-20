@@ -10,6 +10,6 @@ import { ScriptsService } from './scripts.service';
   imports: [SettingsModule],
   controllers: [ScriptsController],
   providers: [ScriptProviderRegistry, AiUsageService, ScriptsService, ScriptGenerationService],
-  exports: [ScriptProviderRegistry, ScriptsService],
+  exports: [ScriptProviderRegistry, ScriptsService, AiUsageService],
 })
 export class ScriptsModule {}

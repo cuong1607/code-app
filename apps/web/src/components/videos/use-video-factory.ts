@@ -9,6 +9,7 @@ import {
   VIDEO_PROMPT_TEMPLATES,
   VIDEO_TEMPLATES,
   VOICES,
+  mediaRepository,
   productRepository,
   scriptRepository,
   videoDraftRepository,
@@ -54,6 +55,8 @@ function batchKeyNow(): string {
 export function useVideoFactory(
   initialProductIds: string[] = [],
   initialScriptId: string | null = null,
+  /** Ảnh (đã duyệt) từ Image Studio (?images=) – đặt lên đầu ảnh của sản phẩm đầu tiên */
+  initialImageIds: string[] = [],
 ) {
   const [config, setConfig] = useState<FactoryConfig>(DEFAULT_CONFIG);
   /** Kịch bản (phiên bản cụ thể) dùng làm đầu vào – chọn từ trang Kịch bản AI (?script=id) */
@@ -70,17 +73,27 @@ export function useVideoFactory(
     setConfig((c) => ({ ...c, [key]: value }));
   }, []);
 
+  /** Ảnh chọn sẵn từ Image Studio, theo sản phẩm (chỉ đọc trong callback, không trong render) */
+  const extraImagesRef = useRef<Map<string, ReferenceImage[]>>(new Map());
+
   /** Nạp ảnh thật của sản phẩm (trang chi tiết) cho các sản phẩm vừa chọn. */
   const loadImages = useCallback(async (products: Product[]) => {
     for (const product of products) {
       try {
         const detail = await productRepository.get(product.id);
-        const images: ReferenceImage[] = detail.media.map((m) => ({
-          id: m.mediaAssetId,
-          previewUrl: m.asset.previewUrl,
-          filename: m.asset.filename,
-        }));
-        const primary = detail.media.find((m) => m.isPrimary)?.mediaAssetId ?? images[0]?.id;
+        const extra = extraImagesRef.current.get(product.id) ?? [];
+        const images: ReferenceImage[] = [
+          ...extra,
+          ...detail.media
+            .filter((m) => !extra.some((e) => e.id === m.mediaAssetId))
+            .map((m) => ({
+              id: m.mediaAssetId,
+              previewUrl: m.asset.previewUrl,
+              filename: m.asset.filename,
+            })),
+        ];
+        const primary =
+          extra[0]?.id ?? detail.media.find((m) => m.isPrimary)?.mediaAssetId ?? images[0]?.id;
         setSelected((prev) =>
           prev.map((s) =>
             s.product.id === product.id
@@ -122,13 +135,24 @@ export function useVideoFactory(
 
   // Chọn sẵn sản phẩm khi đi từ trang Sản phẩm (?products=id1,id2)
   const initialRef = useRef(initialProductIds);
+  const initialImagesRef = useRef(initialImageIds);
   useEffect(() => {
     const ids = initialRef.current;
     if (!ids.length) return;
     let active = true;
-    Promise.allSettled(ids.slice(0, 50).map((id) => productRepository.get(id))).then((results) => {
+    const imageIds = initialImagesRef.current.slice(0, 20);
+    Promise.all([
+      Promise.allSettled(ids.slice(0, 50).map((id) => productRepository.get(id))),
+      Promise.allSettled(imageIds.map((id) => mediaRepository.get(id))),
+    ]).then(([results, images]) => {
       if (!active) return;
       const products = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+      const extra = images.flatMap((r) =>
+        r.status === 'fulfilled'
+          ? [{ id: r.value.id, previewUrl: r.value.previewUrl, filename: r.value.filename }]
+          : [],
+      );
+      if (products[0] && extra.length) extraImagesRef.current.set(products[0].id, extra);
       if (products.length) setProducts(products);
     });
     return () => {

@@ -19,7 +19,8 @@ import { useVideoFactory } from './use-video-factory';
 export function VideoFactoryView() {
   const params = useSearchParams();
   const initial = (params.get('products') ?? '').split(',').filter(Boolean);
-  const state = useVideoFactory(initial, params.get('script'));
+  const images = (params.get('images') ?? '').split(',').filter(Boolean);
+  const state = useVideoFactory(initial, params.get('script'), images);
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:h-[calc(100dvh-var(--topbar-height))] lg:overflow-hidden">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

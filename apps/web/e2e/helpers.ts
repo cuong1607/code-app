@@ -44,6 +44,15 @@ export async function cleanup(prefix: string) {
       (x) => x.title.includes(prefix) || x.productSku?.startsWith(prefix),
     ))
       await ctx.delete(`/scripts/${s.id}`);
+    // Tác vụ ảnh (Phase 04): huỷ nếu còn chạy rồi xoá (ảnh chưa lưu bị xoá khỏi MinIO)
+    const jobs = (await (await ctx.get('/images/jobs', { params: { pageSize: 100 } })).json()) as {
+      items?: { id: string; productName: string; status: string }[];
+    };
+    for (const j of (jobs.items ?? []).filter((x) => x.productName.includes(prefix))) {
+      if (['QUEUED', 'RUNNING', 'WAITING_PROVIDER'].includes(j.status))
+        await ctx.post(`/images/jobs/${j.id}/cancel`);
+      await ctx.delete(`/images/jobs/${j.id}`);
+    }
     const products = await (
       await ctx.get('/products', { params: { search: prefix, pageSize: 100 } })
     ).json();

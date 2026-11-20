@@ -9,7 +9,8 @@ import {
   type AppSettingsUpdate,
   DEFAULT_DISPLAY_TIMEZONE,
   type HealthResponse,
-  type ProviderCheckResult,
+  IMAGE_ASPECTS,
+  type ImageProviderId,
   type ScriptProviderId,
   VIDEO_DURATIONS,
   VIDEO_MODES,
@@ -31,7 +32,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, apiRequest, describeError } from '@/lib/api/client';
 import { useAsync } from '@/hooks/use-async';
-import { VIDEO_TEMPLATES, VOICES, scriptRepository } from '@/lib/data';
+import { VIDEO_TEMPLATES, VOICES, imageRepository, scriptRepository } from '@/lib/data';
 import { formatDateTime } from '@/lib/format';
 import {
   AI_FEATURE_LABEL,
@@ -225,7 +226,6 @@ export function AccountSettings(_props: Partial<SectionProps>) {
 
 /** Provider chưa tích hợp (phase sau) – chỉ hiển thị biến môi trường dự kiến. */
 const FUTURE_PROVIDERS = [
-  { id: 'google', name: 'Google AI', use: 'Ảnh / video – Phase 04/07', env: 'GOOGLE_API_KEY' },
   {
     id: 'elevenlabs',
     name: 'ElevenLabs',
@@ -245,25 +245,45 @@ const code = (s: string) => (
  * giao diện không có ô nhập key và không bao giờ nhận lại giá trị key.
  */
 export function ProviderSettings(_props: Partial<SectionProps>) {
-  const providers = useAsync(() => scriptRepository.providers(), []);
-  const [checks, setChecks] = useState<Record<string, ProviderCheckResult | 'loading'>>({});
-  const check = async (id: ScriptProviderId) => {
-    setChecks((c) => ({ ...c, [id]: 'loading' }));
+  const scriptProviders = useAsync(() => scriptRepository.providers(), []);
+  const imageProviders = useAsync(() => imageRepository.providers(), []);
+  const [checks, setChecks] = useState<
+    Record<string, { ok: boolean; message: string } | 'loading'>
+  >({});
+  const check = async (key: string, fn: () => Promise<{ ok: boolean; message: string }>) => {
+    setChecks((c) => ({ ...c, [key]: 'loading' }));
     try {
-      const r = await scriptRepository.checkProvider(id);
-      setChecks((c) => ({ ...c, [id]: r }));
+      const r = await fn();
+      setChecks((c) => ({ ...c, [key]: r }));
     } catch (error) {
-      setChecks((c) => ({
-        ...c,
-        [id]: {
-          id,
-          ok: false,
-          message: describeError(error),
-          model: null,
-          checkedAt: new Date().toISOString(),
-        },
-      }));
+      setChecks((c) => ({ ...c, [key]: { ok: false, message: describeError(error) } }));
     }
+  };
+  const providers = {
+    error: scriptProviders.error ?? imageProviders.error,
+    reload: () => {
+      scriptProviders.reload();
+      imageProviders.reload();
+    },
+    data:
+      scriptProviders.data && imageProviders.data
+        ? {
+            providers: [
+              ...scriptProviders.data.providers.map((p) => ({
+                ...p,
+                key: `script:${p.id}`,
+                use: 'Kịch bản (Phase 03)',
+                run: () => scriptRepository.checkProvider(p.id as ScriptProviderId),
+              })),
+              ...imageProviders.data.providers.map((p) => ({
+                ...p,
+                key: `image:${p.id}`,
+                use: 'Ảnh AI (Phase 04)',
+                run: () => imageRepository.checkProvider(p.id as ImageProviderId),
+              })),
+            ],
+          }
+        : undefined,
   };
   return (
     <div className="flex flex-col gap-3">
@@ -275,13 +295,13 @@ export function ProviderSettings(_props: Partial<SectionProps>) {
       {!providers.data && !providers.error ? <LoadingState variant="block" /> : null}
       <ul className="flex flex-col gap-3">
         {(providers.data?.providers ?? []).map((p) => {
-          const r = checks[p.id];
+          const r = checks[p.key];
           return (
-            <li key={p.id} className="rounded-xl border p-4">
+            <li key={p.key} className="rounded-xl border p-4">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <PlugZap className="text-muted-foreground size-4" aria-hidden />
                 <p className="font-medium">{p.displayName}</p>
-                <span className="text-muted-foreground text-xs">· Kịch bản (Phase 03)</span>
+                <span className="text-muted-foreground text-xs">· {p.use}</span>
                 {p.isMock ? <Badge variant="demo">KHÔNG PHẢI AI</Badge> : null}
                 <span className="ml-auto">
                   <StatusBadge meta={PROVIDER_STATUS_META[p.status]} />
@@ -301,7 +321,8 @@ export function ProviderSettings(_props: Partial<SectionProps>) {
                   variant="outline"
                   size="sm"
                   disabled={p.status !== 'ready' || r === 'loading'}
-                  onClick={() => void check(p.id)}
+                  aria-label={`Kiểm tra kết nối ${p.displayName} – ${p.use}`}
+                  onClick={() => void check(p.key, p.run)}
                 >
                   {r === 'loading' ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}
                 </Button>
@@ -341,7 +362,18 @@ export function ProviderSettings(_props: Partial<SectionProps>) {
 /** Model & giới hạn của AI Script Engine (lưu DB, nhóm preferences.ai). */
 export function ModelSettings(props: SectionProps) {
   const g = useGroup(props, 'ai');
+  const gi = useGroup(props, 'images');
+  const [saving, setSaving] = useState(false);
+  const saveBoth = async () => {
+    setSaving(true);
+    try {
+      await props.onSave({ preferences: { ai: g.value, images: gi.value } });
+    } finally {
+      setSaving(false);
+    }
+  };
   const providers = useAsync(() => scriptRepository.providers(), []);
+  const imgProviders = useAsync(() => imageRepository.providers(), []);
   const templates = useAsync(() => scriptRepository.templates(), []);
   const list = providers.data?.providers ?? [];
   const current = list.find((p) => p.id === g.value.defaultProvider);
@@ -421,14 +453,54 @@ export function ModelSettings(props: SectionProps) {
         checked={g.value.includePriceByDefault}
         onChange={(v) => g.patch('includePriceByDefault', v)}
       />
+      <h3 className="border-t pt-4 text-sm font-semibold">Ảnh AI (Phase 04)</h3>
+      <div className={grid}>
+        <Field
+          label="Provider tạo ảnh mặc định"
+          htmlFor="st-img-provider"
+          hint="Để trống = provider đầu tiên đã cấu hình"
+        >
+          <NativeSelect
+            id="st-img-provider"
+            value={gi.value.defaultProvider ?? ''}
+            onChange={(e) =>
+              gi.patch(
+                'defaultProvider',
+                (e.target.value || null) as AppPreferences['images']['defaultProvider'],
+              )
+            }
+            placeholder="Tự động"
+            options={(imgProviders.data?.providers ?? []).map((p) => ({
+              value: p.id,
+              label: `${p.displayName}${p.status === 'ready' ? '' : ' (chưa cấu hình)'}`,
+            }))}
+          />
+        </Field>
+        <Field label="Tỷ lệ ảnh mặc định" htmlFor="st-img-aspect" hint="9:16 phù hợp video TikTok">
+          <NativeSelect
+            id="st-img-aspect"
+            value={gi.value.defaultAspect}
+            onChange={(e) =>
+              gi.patch('defaultAspect', e.target.value as AppPreferences['images']['defaultAspect'])
+            }
+            options={IMAGE_ASPECTS.map((a) => ({ value: a, label: a }))}
+          />
+        </Field>
+      </div>
+      <SwitchRow
+        label="Chế độ kiểm duyệt ảnh cho video"
+        hint="Bật: chỉ ảnh AI ĐÃ DUYỆT (so sánh với ảnh gốc) mới được dùng làm đầu vào Video Factory"
+        checked={gi.value.requireApprovalForVideo}
+        onChange={(v) => gi.patch('requireApprovalForVideo', v)}
+      />
       <div className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs">
-        Mô hình tạo ảnh, giọng đọc và video sẽ được thêm ở Phase 04–07.
+        Mô hình giọng đọc và video sẽ được thêm ở Phase 05–07.
       </div>
       <SaveBar
-        dirty={g.dirty}
-        saving={g.saving}
+        dirty={g.dirty || gi.dirty}
+        saving={saving}
         updatedAt={props.settings.updatedAt}
-        onSave={() => void g.save()}
+        onSave={() => void saveBoth()}
       />
     </div>
   );

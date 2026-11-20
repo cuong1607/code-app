@@ -40,18 +40,22 @@ Thứ tự build: `packages/shared` → `apps/*`. Các script gốc `dev/lint/ty
 
 ## 3. Quyết định kỹ thuật & phiên bản
 
-| Hạng mục       | Chọn                                                                           | Lý do                                                                                                                                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| TypeScript     | 5.9                                                                            | TS 7 (native) đã ra nhưng `typescript-eslint` mới hỗ trợ `<6.1`.                                                                                                                                                         |
-| Prisma         | 6.19                                                                           | Tag `latest` trên npm đang là 8.0 **RC**; 6.x ổn định, không bắt buộc driver adapter.                                                                                                                                    |
-| NestJS         | 11                                                                             | Major ổn định, hệ sinh thái (testing, cli) tương thích đầy đủ.                                                                                                                                                           |
-| ESLint         | 9 (flat config)                                                                | Tương thích ổn định với `eslint-config-next` 16 & `typescript-eslint` 8.                                                                                                                                                 |
-| BullMQ         | 5                                                                              | Major ổn định lâu dài.                                                                                                                                                                                                   |
-| Test           | Vitest (+SWC cho Nest)                                                         | Một công cụ test cho cả monorepo; SWC để emit decorator metadata.                                                                                                                                                        |
-| Module format  | CommonJS cho api/worker/shared                                                 | Tương thích tối đa với NestJS/BullMQ; Next.js import CJS bình thường.                                                                                                                                                    |
-| MinIO image    | `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (bản build cộng đồng Pigsty)        | MinIO ngừng phát hành image chính thức (Docker Hub `minio/minio` bị gỡ, `quay.io` 401). Vẫn là MinIO nên giữ nguyên env & code. Vì dùng chuẩn S3 nên có thể thay bằng S3/R2/RustFS/SeaweedFS mà không đổi code ứng dụng. |
-| AI SDK         | `@anthropic-ai/sdk` 1.10 · `openai` 7.60                                       | SDK chính thức của từng nhà cung cấp (Phase 03). Gọi qua adapter server-side; SDK `maxRetries = 0` để retry do app kiểm soát và ghi usage từng lần gọi.                                                                  |
-| Model mặc định | `claude-opus-5-5` (đổi qua `ANTHROPIC_SCRIPT_MODEL`); OpenAI không có mặc định | Không hardcode model ID OpenAI để tránh lỗi thời – bắt buộc cấu hình `OPENAI_SCRIPT_MODEL`.                                                                                                                              |
+| Hạng mục       | Chọn                                                                                  | Lý do                                                                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TypeScript     | 5.9                                                                                   | TS 7 (native) đã ra nhưng `typescript-eslint` mới hỗ trợ `<6.1`.                                                                                                                                                         |
+| Prisma         | 6.19                                                                                  | Tag `latest` trên npm đang là 8.0 **RC**; 6.x ổn định, không bắt buộc driver adapter.                                                                                                                                    |
+| NestJS         | 11                                                                                    | Major ổn định, hệ sinh thái (testing, cli) tương thích đầy đủ.                                                                                                                                                           |
+| ESLint         | 9 (flat config)                                                                       | Tương thích ổn định với `eslint-config-next` 16 & `typescript-eslint` 8.                                                                                                                                                 |
+| BullMQ         | 5                                                                                     | Major ổn định lâu dài.                                                                                                                                                                                                   |
+| Test           | Vitest (+SWC cho Nest)                                                                | Một công cụ test cho cả monorepo; SWC để emit decorator metadata.                                                                                                                                                        |
+| Module format  | CommonJS cho api/worker/shared                                                        | Tương thích tối đa với NestJS/BullMQ; Next.js import CJS bình thường.                                                                                                                                                    |
+| MinIO image    | `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (bản build cộng đồng Pigsty)               | MinIO ngừng phát hành image chính thức (Docker Hub `minio/minio` bị gỡ, `quay.io` 401). Vẫn là MinIO nên giữ nguyên env & code. Vì dùng chuẩn S3 nên có thể thay bằng S3/R2/RustFS/SeaweedFS mà không đổi code ứng dụng. |
+| AI SDK         | `@anthropic-ai/sdk` 1.10 · `openai` 7.60                                              | SDK chính thức của từng nhà cung cấp (Phase 03). Gọi qua adapter server-side; SDK `maxRetries = 0` để retry do app kiểm soát và ghi usage từng lần gọi.                                                                  |
+| Model mặc định | `claude-opus-5-5` (đổi qua `ANTHROPIC_SCRIPT_MODEL`); OpenAI không có mặc định        | Không hardcode model ID OpenAI để tránh lỗi thời – bắt buộc cấu hình `OPENAI_SCRIPT_MODEL`.                                                                                                                              |
+| SDK ảnh (P04)  | `@google/genai` 3.6 (Interactions API) · `openai` 7.60 (`images.edit`)                | SDK chính thức; kiểu dữ liệu đã đối chiếu trong `genai.d.ts`. Retry của SDK tắt – retry ảnh do hàng đợi BullMQ kiểm soát (mỗi ảnh tốn tiền).                                                                             |
+| Model ảnh      | `gemini-3.1-flash-image` (ổn định, đổi qua `GEMINI_IMAGE_MODEL`); OpenAI bắt buộc env | Theo trang models Google AI (20/11/2026). OpenAI: model + đơn giá/ảnh bắt buộc cấu hình (giá tính theo token, không có bảng giá theo ảnh).                                                                               |
+| Xử lý ảnh      | `sharp` 0.35                                                                          | Chuẩn hoá ảnh tham chiếu, pad đúng tỷ lệ (không kéo méo), so màu tham khảo, ghép ảnh gốc (Mode F), ảnh Mock. Native nhưng có prebuilt cho Windows/Linux.                                                                 |
+| Worker ảnh     | Consumer BullMQ queue `image` chạy **trong tiến trình API**                           | Cần Prisma, StorageService, AiUsage, ImageProviderRegistry – đều ở `apps/api`; `apps/worker` chưa có Prisma/S3 (dành cho FFmpeg/render). Tách được bằng `IMAGE_WORKER_ENABLED=false` + chạy instance riêng.              |
 
 Thay đổi công nghệ chỉ khi có lý do kỹ thuật rõ ràng và phải ghi lại tại bảng này.
 
@@ -82,13 +86,14 @@ Thay đổi công nghệ chỉ khi có lý do kỹ thuật rõ ràng và phải 
 
 - Prefix Redis: `QUEUE_PREFIX` (mặc định `acs`).
 - Giai đoạn 00: queue `system`, job `system.ping` dùng để kiểm tra đường ống.
+- Phase 04: queue `image`, job `image.generate-item` (payload chỉ chứa ID, Zod strict), consumer trong tiến trình API (§12).
 - Heartbeat worker: key `worker:heartbeat` (JSON, TTL = 3 × `WORKER_HEARTBEAT_INTERVAL_MS`), chứa cả trạng thái FFmpeg.
 - Redis chạy với `appendonly yes` và `maxmemory-policy noeviction` (bắt buộc với BullMQ).
 
 ## 8. Provider interfaces (AI)
 
-Định nghĩa tại `packages/shared/src/providers/`. Phase 03 đã triển khai `ScriptProvider` (xem §11); các interface còn lại
-chưa có triển khai:
+Định nghĩa tại `packages/shared/src/providers/`. Phase 03 đã triển khai `ScriptProvider` (xem §11), Phase 04 triển khai
+`ImageProvider` (xem §12); TTS và Video chưa có triển khai:
 
 | Interface              | Nhiệm vụ                                        |
 | ---------------------- | ----------------------------------------------- |
@@ -195,9 +200,40 @@ Thư viện thêm ở Phase 02 (lý do): `exceljs` (đọc/ghi .xlsx, MIT, khôn
 - **Chuẩn bị cho TTS (Phase 05)**: `document.narration` + `scenes[].spokenText` (+ `durationHintSeconds`) là đầu vào trực tiếp;
   lời thoại đã được kiểm tra không hashtag/emoji/URL, có dấu; `estimateSpeechSeconds()` chỉ là dự kiến.
 
-## 12. Định hướng (chưa triển khai)
+## 12. AI Image Studio – Nhà cửa & Đời sống (Phase 04)
+
+```
+/studio/images ─► POST /images/jobs (idempotencyKey) ─► ImageJobsService: sản phẩm + ảnh gốc thuộc workspace ─ template áp dụng
+                                                         ─ provider/model ─ đơn giá ─ ngân sách (gồm ảnh đang xếp hàng) ─ rate limit
+                         image_generation_jobs + image_generation_items (1 item = 1 ảnh) ─► BullMQ queue "image" (jobId cố định)
+ImageItemProcessor (consumer trong API): ảnh gốc MinIO (kiểm SHA-256) ─► sharp chuẩn hoá ─► ImageProvider.editImage (Gemini|OpenAI|Mock)
+   ─► kiểm tra ảnh trả về ─► pad tỷ lệ ─► so màu tham khảo ─► MinIO ws/{ws}/ai-images/… + MediaAsset (AI_IMAGE, library_visible=false)
+   ─► ai_usage (mỗi lời gọi) ─► trạng thái job tổng hợp. Mode F: sharp ghép ảnh gốc (COMPOSED_IMAGE, không AI).
+```
+
+- **Code**: `apps/api/src/ai/image/` (visual context, template, prompt builder, provider, đơn giá, xử lý ảnh) và
+  `apps/api/src/images/` (API, service, processor, queue). Schema chung: `packages/shared/src/domain/image-engine.ts`.
+- **Product Visual Context**: loại sản phẩm (12 loại, 4 nhóm) từ thuộc tính "Loại" > tên > danh mục (mẫu khớp sớm nhất);
+  màu/họa tiết/chất liệu/kích thước/hình dáng/"Bộ gồm" CHỈ từ thuộc tính DB (ghi tên thuộc tính gốc); số lượng thành phần chỉ khi
+  có số rõ; thiếu -> `missing` + cảnh báo. Chưa có AI phân tích ảnh (`imageAnalysis: 'none'`).
+- **Prompt builder** (tiếng Anh cho model, quy tắc/cảnh báo tiếng Việt cho UI): dữ kiện sản phẩm là JSON đã escape, ghi rõ là
+  dữ liệu; khối MUST PRESERVE (màu, họa tiết, đường may, hình dáng, cấu trúc, số lượng, tỷ lệ, logo, chất liệu) ưu tiên cao hơn
+  bối cảnh/phong cách/yêu cầu người dùng; negative constraints tách riêng khi provider hỗ trợ, ngược lại ghi `AVOID:`; ảnh quảng
+  cáo chừa vùng chữ (chữ chèn bằng renderer sau, không bắt AI vẽ chữ tiếng Việt).
+- **Giữ đúng sản phẩm**: AI KHÔNG bảo đảm. Hệ thống: ảnh gốc bất biến, so sánh cạnh nhau + zoom đồng bộ, danh sách tự kiểm,
+  so màu ΔE (tham khảo, cờ `color_low`), cờ người duyệt, duyệt/từ chối, tạo lại (item mới), chế độ kiểm duyệt chặn ảnh chưa duyệt
+  khi tạo bản nháp video (`preferences.images.requireApprovalForVideo`, mặc định bật).
+- **Hàng đợi**: retry có giới hạn (`IMAGE_MAX_ATTEMPTS`, đếm cả trong DB để không lặp vô hạn khi khôi phục), lỗi vĩnh viễn
+  (từ chối, request sai, ngân sách) không retry; rate limit theo provider; reconcile khi khởi động + mỗi phút (item QUEUED/RUNNING
+  không còn job trong Redis -> đưa lại); huỷ tác vụ -> item chưa chạy bị gỡ, item đang chạy bỏ kết quả (chi phí vẫn ghi).
+- **Lưu trữ**: ghi MinIO rồi tạo DB trong transaction; lỗi DB -> xoá object; key dưới `ws/` nên job dọn object mồ côi bao phủ.
+  Xoá tác vụ chỉ xoá ảnh chưa lưu thư viện/chưa gắn sản phẩm.
+- **Chi phí**: đơn giá/ảnh × số ảnh = ước tính (Gemini: bảng giá công khai + 15% dự phòng token đầu vào; OpenAI: env). Lời gọi lỗi
+  ghi chi phí `null` (chưa xác định) – không ghi 0.
+
+## 13. Định hướng (chưa triển khai)
 
 - Module nghiệp vụ trong api: `products`, `scripts`, `assets`, `voices`, `videos`, `schedules`, `integrations/tiktok`.
-- Queue riêng cho từng loại tác vụ: `ingest`, `script`, `image`, `tts`, `render`, `publish` để giới hạn concurrency/rate-limit độc lập.
+- Queue riêng cho từng loại tác vụ: `ingest`, `script`, `tts`, `render`, `publish` (queue `image` đã có từ Phase 04) để giới hạn concurrency/rate-limit độc lập.
 - Worker render chạy trong container có FFmpeg để đồng nhất giữa Windows/WSL/server.
 - Lưu file vào MinIO theo key `{projectId}/{kind}/{uuid}.{ext}`; client chỉ nhận presigned URL.

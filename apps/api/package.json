@@ -19,6 +19,7 @@
     "prisma:studio": "dotenv run -q -f ../../.env -- prisma studio",
     "prisma:seed": "dotenv run -q -f ../../.env -- tsx prisma/seed.ts",
     "ai:smoke": "tsx scripts/ai-smoke.ts",
+    "ai:image-smoke": "tsx scripts/image-smoke.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

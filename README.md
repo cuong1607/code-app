@@ -2,10 +2,11 @@
 
 Hệ thống web tự động lấy thông tin & ảnh sản phẩm, dùng AI viết kịch bản, tạo ảnh, tạo giọng đọc tiếng Việt, dựng video hàng loạt và quản lý lịch đăng TikTok.
 
-> **Trạng thái hiện tại: Giai đoạn 03 – AI Script Engine.** AI viết kịch bản tiếng Việt từ sản phẩm trong PostgreSQL
-> (Claude / OpenAI qua adapter server-side), nhiều biến thể, phiên bản, chi phí & ngân sách. Toàn bộ luồng đã kiểm thử với
-> **Mock provider**; gọi AI thật cần đặt API key (chưa xác minh trên máy dev). Chưa có ảnh AI, giọng đọc, render video, đăng
-> TikTok và **chưa có đăng nhập** (chỉ dùng trên máy cục bộ). Xem [docs/ROADMAP.md](docs/ROADMAP.md),
+> **Trạng thái hiện tại: Giai đoạn 04 – AI Image Studio (code hoàn tất, chờ nghiệm thu với provider thật).** Phase 03: AI
+> viết kịch bản tiếng Việt (Claude / OpenAI). Phase 04: ảnh quảng cáo chăn ga gối, thảm, chiếu từ ảnh sản phẩm thật (Gemini /
+> OpenAI qua adapter, hàng đợi BullMQ, lưu MinIO, so sánh & duyệt). Toàn bộ luồng đã kiểm thử với **Mock provider**; gọi AI
+> thật cần đặt API key (**chưa xác minh** trên máy dev). Chưa có giọng đọc, render video, đăng TikTok và **chưa có đăng
+> nhập** (chỉ dùng trên máy cục bộ). Xem [docs/ROADMAP.md](docs/ROADMAP.md),
 > [docs/API.md](docs/API.md), [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
 
 > ⚠️ **Bảo mật:** API chạy chế độ `AUTH_MODE=dev-local` – KHÔNG có xác thực. Web và API chỉ nghe trên `127.0.0.1`;
@@ -28,7 +29,7 @@ Hệ thống web tự động lấy thông tin & ảnh sản phẩm, dùng AI vi
 | Thành phần        | Công nghệ                                                         | Cổng local  |
 | ----------------- | ----------------------------------------------------------------- | ----------- |
 | `apps/web`        | Next.js 16 (App Router) · TypeScript · Tailwind 4 · shadcn/ui     | 3000        |
-| `apps/api`        | NestJS 11 · Prisma 6 · BullMQ (producer)                          | 4000        |
+| `apps/api`        | NestJS 11 · Prisma 6 · BullMQ (producer + consumer queue ảnh)     | 4000        |
 | `apps/worker`     | Node.js · BullMQ (consumer) · FFmpeg                              | –           |
 | `packages/shared` | Zod schema, kiểu dữ liệu, provider interfaces, tiện ích thời gian | –           |
 | `packages/config` | tsconfig / ESLint / Prettier dùng chung                           | –           |
@@ -131,27 +132,28 @@ Mở VS Code từ WSL: `code .` (cần extension **WSL**). Trình duyệt Window
 
 ## 4. Danh sách scripts (chạy ở thư mục gốc)
 
-| Script                                                                      | Mô tả                                                                                |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `pnpm dev`                                                                  | Build `shared`, chạy song song web + api + worker (watch)                            |
-| `pnpm dev:web` / `dev:api` / `dev:worker`                                   | Chạy riêng từng app                                                                  |
-| `pnpm build`                                                                | Build production tất cả package (theo thứ tự phụ thuộc)                              |
-| `pnpm start:api` / `start:worker` / `start:web`                             | Chạy bản build                                                                       |
-| `pnpm lint`                                                                 | ESLint toàn bộ                                                                       |
-| `pnpm typecheck`                                                            | Kiểm tra kiểu TypeScript toàn bộ                                                     |
-| `pnpm test`                                                                 | Chạy test (Vitest) toàn bộ                                                           |
-| `pnpm format` / `format:check`                                              | Prettier                                                                             |
-| `pnpm check`                                                                | format:check + lint + typecheck + test                                               |
-| `pnpm infra:up` / `infra:down` / `infra:ps` / `infra:logs` / `infra:config` | Docker Compose                                                                       |
-| `pnpm db:migrate`                                                           | `prisma migrate dev` (tạo/áp dụng migration)                                         |
-| `pnpm db:deploy`                                                            | `prisma migrate deploy` (môi trường triển khai)                                      |
-| `pnpm db:generate` / `db:studio`                                            | Prisma Client / Prisma Studio                                                        |
-| `pnpm db:seed`                                                              | Tạo workspace phát triển + 12 sản phẩm MẪU (idempotent, không ghi đè dữ liệu đã sửa) |
-| `pnpm health`                                                               | Gọi `GET /health` và in kết quả (exit 1 nếu hệ thống down)                           |
-| `pnpm test:integration`                                                     | Kiểm thử tích hợp API với PostgreSQL + MinIO thật (cần `infra:up` + `db:deploy`)     |
-| `pnpm test:e2e`                                                             | Build web rồi chạy Playwright trên dữ liệu thật (cần `pnpm dev:api` đang chạy)       |
-| `pnpm --filter @acs/web test:e2e:install`                                   | Cài trình duyệt Chromium cho Playwright (chạy 1 lần)                                 |
-| `pnpm ai:smoke` (`-- openai`, `-- --cleanup`)                               | Smoke test **AI thật** (cần API đang chạy + API key; **có phát sinh chi phí**)       |
+| Script                                                                      | Mô tả                                                                                  |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `pnpm dev`                                                                  | Build `shared`, chạy song song web + api + worker (watch)                              |
+| `pnpm dev:web` / `dev:api` / `dev:worker`                                   | Chạy riêng từng app                                                                    |
+| `pnpm build`                                                                | Build production tất cả package (theo thứ tự phụ thuộc)                                |
+| `pnpm start:api` / `start:worker` / `start:web`                             | Chạy bản build                                                                         |
+| `pnpm lint`                                                                 | ESLint toàn bộ                                                                         |
+| `pnpm typecheck`                                                            | Kiểm tra kiểu TypeScript toàn bộ                                                       |
+| `pnpm test`                                                                 | Chạy test (Vitest) toàn bộ                                                             |
+| `pnpm format` / `format:check`                                              | Prettier                                                                               |
+| `pnpm check`                                                                | format:check + lint + typecheck + test                                                 |
+| `pnpm infra:up` / `infra:down` / `infra:ps` / `infra:logs` / `infra:config` | Docker Compose                                                                         |
+| `pnpm db:migrate`                                                           | `prisma migrate dev` (tạo/áp dụng migration)                                           |
+| `pnpm db:deploy`                                                            | `prisma migrate deploy` (môi trường triển khai)                                        |
+| `pnpm db:generate` / `db:studio`                                            | Prisma Client / Prisma Studio                                                          |
+| `pnpm db:seed`                                                              | Tạo workspace phát triển + 12 sản phẩm MẪU (idempotent, không ghi đè dữ liệu đã sửa)   |
+| `pnpm health`                                                               | Gọi `GET /health` và in kết quả (exit 1 nếu hệ thống down)                             |
+| `pnpm test:integration`                                                     | Kiểm thử tích hợp API với PostgreSQL + MinIO thật (cần `infra:up` + `db:deploy`)       |
+| `pnpm test:e2e`                                                             | Build web rồi chạy Playwright trên dữ liệu thật (cần `pnpm dev:api` đang chạy)         |
+| `pnpm --filter @acs/web test:e2e:install`                                   | Cài trình duyệt Chromium cho Playwright (chạy 1 lần)                                   |
+| `pnpm ai:smoke` (`-- openai`, `-- --cleanup`)                               | Smoke test **AI thật** (cần API đang chạy + API key; **có phát sinh chi phí**)         |
+| `pnpm ai:image-smoke` (`-- <productId> [openai]`)                           | Smoke test **ảnh AI thật** – 1 ảnh (cần API đang chạy + key; **có phát sinh chi phí**) |
 
 Screenshot của lần chạy E2E gần nhất nằm ở `apps/web/e2e-screenshots/` (không commit). Dữ liệu do test tạo
 (tiền tố SKU `IT…`, `IM…`, `E2E…`) được tự dọn sau khi chạy.
@@ -201,6 +203,36 @@ phiên bản mới. Tab **Lời thoại** là văn bản sẽ dùng cho giọng 
 Xưởng video với kịch bản đã gắn.
 
 **4. Kiểm tra với AI thật:** `pnpm ai:smoke` – 3 sản phẩm × 4 phong cách + 3 biến thể + thử dữ liệu chứa chỉ dẫn độc hại.
+
+## 4d. Xưởng ảnh AI – Nhà cửa & Đời sống (Phase 04)
+
+**1. Cấu hình provider ảnh (chỉ ở server)** trong `.env`, rồi khởi động lại `pnpm dev`:
+
+```dotenv
+GOOGLE_API_KEY=...                         # Gemini – lấy ở aistudio.google.com
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image   # mặc định; khác: gemini-nano-banana-2.1 (rẻ hơn), gemini-3-pro-image
+GEMINI_IMAGE_SIZE=1K                        # 1K | 2K
+# hoặc OpenAI (bắt buộc model + đơn giá/ảnh ước tính):
+# OPENAI_API_KEY=...  OPENAI_IMAGE_MODEL=...  OPENAI_IMAGE_PRICE_PER_IMAGE_USD=...
+```
+
+Cài đặt › **API Providers** → **Kiểm tra kết nối** (không tạo ảnh). Cài đặt › **AI Models** → provider/tỷ lệ mặc định và
+**Chế độ kiểm duyệt ảnh cho video** (mặc định bật).
+
+**2. Chuẩn bị sản phẩm.** Sản phẩm cần **ảnh gốc thật** và nên có thuộc tính `Màu sắc`, `Họa tiết`, `Chất liệu`, `Kích thước`,
+`Hình dạng` (thảm), `Bộ gồm` (vd "1 ga, 2 vỏ gối, 1 vỏ chăn"). Thuộc tính thiếu thì AI chỉ dựa vào ảnh – hệ thống không tự đoán.
+
+**3. Tạo ảnh đầu tiên.** Xưởng ảnh AI → **Chọn sản phẩm** → chọn ảnh tham chiếu → chế độ (A thay nền, B nội thất, C quảng
+cáo, D cận chi tiết, E nhiều biến thể, F ghép ảnh gốc – không AI) → bối cảnh (10 template, có gợi ý theo loại sản phẩm) →
+phong cách, tỷ lệ (ưu tiên 9:16), số ảnh 1/3/5 → xem **chi phí ước tính** và **prompt & quy tắc giữ đúng sản phẩm** →
+**Tạo ảnh**. Ảnh xử lý nền (hiển thị giai đoạn), lưu MinIO.
+
+**4. Kiểm tra & duyệt.** Bấm ảnh → so sánh cạnh ảnh gốc, zoom 2×/4×, soát danh sách tự kiểm và chỉ số màu (tham khảo) →
+**Duyệt** hoặc **Từ chối** kèm cờ. Ảnh đạt: **Lưu vào thư viện**, **Gắn vào sản phẩm**, **Tải xuống**, hoặc
+**Sử dụng làm ảnh đầu vào Video Factory** (chỉ ảnh đã duyệt khi bật kiểm duyệt). **Tạo lại** tạo ảnh mới, giữ ảnh cũ.
+
+**5. Kiểm tra với AI thật:** `pnpm ai:image-smoke -- <productId>` – 1 ảnh thật (chặn nếu ước tính > `SMOKE_MAX_USD`, mặc
+định $0.25), kiểm tra file trên MinIO; sau đó tự so sánh/duyệt trên giao diện.
 
 ---
 

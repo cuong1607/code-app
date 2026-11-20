@@ -3,6 +3,9 @@
  * Tập trung tại đây để màu trạng thái thống nhất toàn hệ thống.
  */
 import type {
+  ImageApprovalStatus,
+  ImageItemStage,
+  ImageJobStatus,
   AspectRatio,
   MediaKind,
   MediaSourceType,
@@ -163,6 +166,7 @@ export const AI_FEATURE_LABEL: Record<string, string> = {
   scene_regenerate: 'Tạo lại cảnh',
   caption_generate: 'Tạo caption',
   provider_check: 'Kiểm tra kết nối',
+  image_generate: 'Tạo ảnh',
 };
 
 export const AI_USAGE_STATUS_META: Record<string, StatusMeta> = {
@@ -171,4 +175,32 @@ export const AI_USAGE_STATUS_META: Record<string, StatusMeta> = {
   invalid_output: { label: 'Output sai', tone: 'warning' },
   refused: { label: 'Bị từ chối', tone: 'warning' },
   rejected_budget: { label: 'Chặn bởi ngân sách', tone: 'neutral' },
+};
+
+// ---------------------------------------------------------------- AI Image Studio (Phase 04)
+export const IMAGE_JOB_STATUS_META: Record<ImageJobStatus, StatusMeta> = {
+  QUEUED: { label: 'Đang chờ', tone: 'neutral' },
+  RUNNING: { label: 'Đang xử lý', tone: 'processing' },
+  WAITING_PROVIDER: { label: 'Đang chờ AI', tone: 'processing' },
+  COMPLETED: { label: 'Hoàn thành', tone: 'success' },
+  FAILED: { label: 'Thất bại', tone: 'danger' },
+  CANCELLED: { label: 'Đã huỷ', tone: 'neutral' },
+};
+
+export const IMAGE_APPROVAL_META: Record<ImageApprovalStatus, StatusMeta> = {
+  pending: { label: 'Chờ duyệt', tone: 'warning' },
+  approved: { label: 'Đã duyệt', tone: 'success' },
+  rejected: { label: 'Đã từ chối', tone: 'danger' },
+};
+
+/** Giai đoạn xử lý – hiển thị thay cho phần trăm (provider không trả tiến độ %). */
+export const IMAGE_STAGE_LABEL: Record<ImageItemStage, string> = {
+  queued: 'Trong hàng đợi',
+  loading_references: 'Đang đọc ảnh gốc',
+  calling_provider: 'Đang chờ AI tạo ảnh',
+  post_processing: 'Đang kiểm tra ảnh',
+  saving: 'Đang lưu vào MinIO',
+  done: 'Xong',
+  failed: 'Lỗi',
+  cancelled: 'Đã huỷ',
 };

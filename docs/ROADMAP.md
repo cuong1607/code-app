@@ -223,7 +223,7 @@ Ghi chú kỹ thuật GĐ 03:
 - Model chưa xem ảnh sản phẩm (chỉ dùng văn bản + số ảnh); phát hiện bịa đặt bằng luật (giá, khuyến mãi, từ tuyệt đối),
   không thay được kiểm duyệt của con người.
 
-## Giai đoạn 04 – AI Image Studio cho Nhà cửa & Đời sống (🟡 đang triển khai)
+## Giai đoạn 04 – AI Image Studio cho Nhà cửa & Đời sống (🟡 code hoàn tất – CHỜ nghiệm thu với provider thật)
 
 Bắt đầu: 2026-11-20 (UTC). Checkpoint trước khi sửa: tag `checkpoint-before-phase-04` (= commit `1ff032f`).
 Phase 03 vẫn 🟡 (chưa xác minh với AI thật) – không đổi trạng thái.
@@ -269,6 +269,37 @@ kiểm tra kiểu SDK (`@google/genai` 3.6.1, `openai` 7.60) trước khi viết
 
 Quyết định: consumer hàng đợi ảnh chạy **trong tiến trình API** (dùng lại Prisma/Storage/AiUsage/Registry) thay vì
 `apps/worker` (chưa có Prisma/S3) – ghi ở ARCHITECTURE. `IMAGE_WORKER_ENABLED=false` để tách khi cần.
+
+### Milestone 04C – Image Studio UI (✅)
+
+| #   | Hạng mục                                                                                                                                                                                                                                                                                                                          | Trạng thái | Cách kiểm chứng                        |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------- |
+| 1   | `/studio/images` panel trái: chọn sản phẩm thật, dữ kiện thị giác (nguồn từng dữ kiện, phần còn thiếu), chọn ảnh tham chiếu (giới hạn theo model), chế độ A–F, bối cảnh (gợi ý/ẩn bối cảnh không hợp), phong cách, prompt, tỷ lệ (9:16 ưu tiên), số ảnh, provider/model, chi phí ước tính, xem prompt & quy tắc giữ đúng sản phẩm | ✅         | E2E                                    |
+| 2   | Bên phải: danh sách tác vụ, lưới kết quả với giai đoạn (không % giả), trạng thái, huỷ/xoá tác vụ, polling                                                                                                                                                                                                                         | ✅         | E2E (tải lại trang vẫn còn)            |
+| 3   | Hộp thoại so sánh ảnh gốc/ảnh mới cạnh nhau, zoom 1×/2×/4× cuộn đồng bộ, danh sách tự kiểm, kiểm tra màu tham khảo, cờ + ghi chú, duyệt/từ chối, tải, lưu thư viện, gắn sản phẩm, tạo lại                                                                                                                                         | ✅         | E2E                                    |
+| 4   | "Sử dụng làm ảnh đầu vào Video Factory" (`/studio/videos?products=&images=`; chỉ ảnh đã duyệt khi bật kiểm duyệt)                                                                                                                                                                                                                 | ✅         | E2E + Integration (422 ảnh chưa duyệt) |
+| 5   | Cài đặt: provider ảnh thật + kiểm tra kết nối; provider/tỷ lệ mặc định, chế độ kiểm duyệt; bỏ template/provider giả của Phase 01                                                                                                                                                                                                  | ✅         | E2E                                    |
+| 6   | Nhãn Mock "MOCK – KHÔNG PHẢI ẢNH AI", Mode F "ẢNH GHÉP – KHÔNG PHẢI AI", thông báo provider thật chưa xác minh                                                                                                                                                                                                                    | ✅         | E2E                                    |
+
+Kiểm tra bố cục bằng ảnh chụp 1440px và 390px: không tràn ngang (scrollWidth − clientWidth = 0).
+
+### Milestone 04D – Real AI & Acceptance (❌ chưa thực hiện được)
+
+- Máy dev **không có** `GOOGLE_API_KEY` / `OPENAI_API_KEY` → **chưa gọi provider ảnh thật**, chưa có ảnh AI thật, chưa đánh giá
+  chất lượng giữ màu/hoa văn thực tế. Đã viết `pnpm ai:image-smoke` (1 ảnh, chặn nếu ước tính > `SMOKE_MAX_USD`); chạy thử →
+  dừng đúng với mã 2 "CHƯA được xác minh".
+- Điều kiện nghiệm thu 4 (tạo ảnh bằng provider AI thật) chưa đạt → **Phase 04 code complete, real provider acceptance pending**.
+
+**Kết quả kiểm thử cuối Phase 04:** `pnpm check` exit 0 – **237 unit** (shared 63, api 146, web 24, worker 4) ·
+`pnpm build` exit 0 · `pnpm test:integration` **66/66** (46 cũ + 20 mới) · `pnpm test:e2e` **46/46** (43 cũ + 3 mới).
+
+### Giới hạn hiện tại
+
+- Chưa xác minh Gemini/OpenAI thật; đơn giá Gemini là bảng tham khảo (20/11/2026) + 15% dự phòng, OpenAI cần cấu hình.
+- Kích thước OpenAI cho 9:16/4:5/16:9 suy ra từ ràng buộc tài liệu (bội số 16…), chưa thử với API thật.
+- Kiểm tra màu tự động là chỉ số tham khảo trên toàn ảnh (không tách được sản phẩm khỏi bối cảnh); chưa có AI phân tích ảnh.
+- Worker ảnh chạy trong tiến trình API; rate limit theo provider nằm trong bộ nhớ (1 instance).
+- Mode F chỉ đặt ảnh gốc lên nền trơn (chưa tách nền/đổ bóng).
 
 ## Giai đoạn 05 – Giọng đọc tiếng Việt (⬜)
 

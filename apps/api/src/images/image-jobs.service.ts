@@ -536,6 +536,43 @@ export class ImageJobsService {
     return toItemDto(await this.findItem(ws, itemId), this.storage);
   }
 
+  /**
+   * Xoá tác vụ (đã kết thúc). Ảnh chưa lưu thư viện & chưa gắn sản phẩm bị xoá cả file MinIO;
+   * ảnh người dùng đã lưu/gắn được GIỮ LẠI trong thư viện. Ảnh gốc sản phẩm không bị đụng tới.
+   */
+  async remove(
+    ws: string,
+    jobId: string,
+  ): Promise<{ deleted: true; removedImages: number; keptImages: number }> {
+    const job = await this.prisma.imageGenerationJob.findFirst({
+      where: { id: jobId, workspaceId: ws },
+      include: { items: { include: ITEM_INCLUDE } },
+    });
+    if (!job) throw new AppError('NOT_FOUND', 'Không tìm thấy tác vụ tạo ảnh');
+    if (IMAGE_JOB_ACTIVE_STATUSES.includes(job.status)) {
+      throw new AppError('CONFLICT', 'Tác vụ đang chạy – huỷ trước khi xoá');
+    }
+    const assets = job.items.map((i) => i.mediaAsset).filter((a) => !!a);
+    const removable = assets.filter((a) => !a.libraryVisible && (a._count?.products ?? 0) === 0);
+    await this.prisma.$transaction([
+      this.prisma.imageGenerationJob.delete({ where: { id: jobId } }),
+      this.prisma.mediaAsset.deleteMany({
+        where: { id: { in: removable.map((a) => a.id) }, workspaceId: ws },
+      }),
+    ]);
+    for (const a of removable) {
+      // Lỗi xoá file -> job dọn dẹp object mồ côi (tiền tố ws/) sẽ xử lý sau
+      await this.storage
+        .deleteObject(a.storageKey)
+        .catch((e) => this.logger.warn(`Chưa xoá được ${a.storageKey}: ${toErrorMessage(e)}`));
+    }
+    return {
+      deleted: true,
+      removedImages: removable.length,
+      keptImages: assets.length - removable.length,
+    };
+  }
+
   async downloadUrl(ws: string, itemId: string) {
     const item = await this.findItem(ws, itemId);
     if (!item.mediaAssetId) throw new AppError('NOT_FOUND', 'Ảnh chưa có file');

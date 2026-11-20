@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { z } from 'zod';
 import {
@@ -135,6 +135,12 @@ export class ImagesController {
   @Get('jobs/:id')
   detail(@WorkspaceId() ws: string, @Param('id') id: string) {
     return this.jobs.detail(ws, parseId(id));
+  }
+
+  /** Xoá tác vụ đã kết thúc (ảnh đã lưu thư viện/gắn sản phẩm được giữ lại). */
+  @Delete('jobs/:id')
+  remove(@WorkspaceId() ws: string, @Param('id') id: string) {
+    return this.jobs.remove(ws, parseId(id));
   }
 
   @Post('jobs/:id/cancel')

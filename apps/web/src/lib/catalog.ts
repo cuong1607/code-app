@@ -94,17 +94,4 @@ export const DEFAULT_VIDEO_PROMPT = VIDEO_PROMPT_TEMPLATES[5]!.content;
 
 // Phong cách / giọng văn / đối tượng kịch bản: lấy từ API (/scripts/templates) và @acs/shared (Phase 03)
 
-export const IMAGE_TEMPLATES = [
-  { id: 'ad', name: 'Ảnh quảng cáo sản phẩm', hint: 'Nền sạch, chữ nổi bật' },
-  { id: 'background', name: 'Thay đổi bối cảnh', hint: 'Giữ sản phẩm, đổi phông' },
-  { id: 'lifestyle', name: 'Lifestyle', hint: 'Sản phẩm trong đời sống' },
-  { id: 'model', name: 'Người mẫu thời trang', hint: 'Người mẫu mặc/cầm sản phẩm' },
-  { id: 'studio', name: 'Ảnh studio', hint: 'Ánh sáng studio chuyên nghiệp' },
-  { id: 'luxury', name: 'Ảnh sản phẩm cao cấp', hint: 'Tông tối, sang trọng' },
-] as const;
-
-/** Placeholder: chưa có provider nào được cấu hình ở Phase 01. */
-export const AI_PROVIDER_PLACEHOLDERS = [
-  { id: 'image-provider-a', name: 'Nhà cung cấp ảnh A (chưa cấu hình)' },
-  { id: 'image-provider-b', name: 'Nhà cung cấp ảnh B (chưa cấu hình)' },
-] as const;
+// Template / chế độ / phong cách ảnh: lấy từ API (/images/templates) – Phase 04

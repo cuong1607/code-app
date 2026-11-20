@@ -601,6 +601,38 @@ describe('Lỗi, retry, batch không hỏng toàn bộ', () => {
   });
 });
 
+describe('Xoá tác vụ', () => {
+  it('đang chạy -> 409; đã xong -> xoá ảnh chưa lưu khỏi MinIO, giữ ảnh đã lưu thư viện & ảnh gốc', async () => {
+    const res = await h
+      .http()
+      .post('/images/jobs')
+      .send(body({ count: 3, mode: 'batch_variations' }));
+    expect((await h.http().delete(`/images/jobs/${res.body.id}`)).status).toBe(409);
+    await processAll(res.body.id);
+    const items = (await h.http().get(`/images/jobs/${res.body.id}`)).body.items as Array<{
+      id: string;
+      asset: { id: string };
+    }>;
+    await h.http().post(`/images/items/${items[0]!.id}/save`);
+    const keys = await h.prisma.mediaAsset.findMany({
+      where: { id: { in: items.map((i) => i.asset.id) } },
+      select: { id: true, storageKey: true },
+    });
+    const del = await h.http().delete(`/images/jobs/${res.body.id}`);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ deleted: true, removedImages: 2, keptImages: 1 });
+    expect((await h.http().get(`/images/jobs/${res.body.id}`)).status).toBe(404);
+    const kept = keys.find((k) => k.id === items[0]!.asset.id)!;
+    expect(await storage.head(kept.storageKey)).not.toBeNull();
+    for (const k of keys.filter((x) => x.id !== kept.id)) {
+      expect(await storage.head(k.storageKey)).toBeNull();
+      expect(await h.prisma.mediaAsset.findUnique({ where: { id: k.id } })).toBeNull();
+    }
+    expect(await h.prisma.mediaAsset.findUnique({ where: { id: refs.bedding } })).not.toBeNull();
+    await h.http().delete(`/media/${kept.id}?force=true`);
+  });
+});
+
 describe('Mode F – ghép ảnh gốc (không AI)', () => {
   it('tạo ảnh COMPOSED_IMAGE, không ghi ai_usage, chỉ 1 ảnh/lần', async () => {
     const bad = await h

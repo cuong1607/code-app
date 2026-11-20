@@ -40,6 +40,25 @@ import {
   type VideoDraft,
   type VideoDraftInput,
   type WorkspaceContext,
+  type ImageEstimate,
+  type ImageGenerateRequestInput,
+  type ImageItem,
+  type ImageJobDetail,
+  type ImageMode,
+  type ImageProductContext,
+  type ImageProviderCheck,
+  type ImageProviderId,
+  type ImageProvidersResponse,
+  type ImageReviewFlag,
+  IMAGE_MODES,
+  imageEstimateSchema,
+  imageItemSchema,
+  imageJobDetailSchema,
+  imageJobSchema,
+  imageProductContextSchema,
+  imageProviderCheckSchema,
+  imageProvidersResponseSchema,
+  imageTemplateSchema,
   ALLOWED_IMAGE_MIME_TYPES,
   appSettingsSchema,
   completeUploadResponseSchema,
@@ -347,6 +366,89 @@ export const scriptRepository = {
     apiRequest(`/scripts/${id}/preferred`, { method: 'PUT', schema: scriptDetailSchema }),
   remove: (id: string) => apiRequest(`/scripts/${id}`, { method: 'DELETE', schema: deleted }),
 };
+// ---------------------------------------------------------------- AI Image Studio (Phase 04)
+const imageCatalogSchema = z.object({
+  templates: z.array(imageTemplateSchema),
+  modes: z.array(
+    z.object({
+      id: z.enum(IMAGE_MODES),
+      letter: z.string(),
+      label: z.string(),
+      description: z.string(),
+      usesAi: z.boolean(),
+    }),
+  ),
+  styles: z.array(z.object({ id: z.string(), label: z.string(), prompt: z.string() })),
+});
+export type ImageCatalog = z.infer<typeof imageCatalogSchema>;
+
+export const imageRepository = {
+  catalog: (): Promise<ImageCatalog> =>
+    apiRequest('/images/templates', { schema: imageCatalogSchema }),
+  providers: (): Promise<ImageProvidersResponse> =>
+    apiRequest('/images/providers', { schema: imageProvidersResponseSchema }),
+  checkProvider: (id: ImageProviderId, model?: string): Promise<ImageProviderCheck> =>
+    apiRequest(`/images/providers/${id}/check`, {
+      method: 'POST',
+      body: model ? { model } : {},
+      schema: imageProviderCheckSchema,
+      timeoutMs: 30_000,
+    }),
+  productContext: (productId: string, mode?: ImageMode): Promise<ImageProductContext> =>
+    apiRequest(`/images/products/${productId}/context`, {
+      query: { mode },
+      schema: imageProductContextSchema,
+    }),
+  /** Ước tính chi phí + xem trước prompt – KHÔNG gọi AI */
+  estimate: (req: ImageGenerateRequestInput): Promise<ImageEstimate> =>
+    apiRequest('/images/estimate', { method: 'POST', body: req, schema: imageEstimateSchema }),
+  /** Tạo tác vụ (xếp hàng). Cùng idempotencyKey -> trả tác vụ cũ, không tạo trùng. */
+  createJob: (req: ImageGenerateRequestInput): Promise<ImageJobDetail> =>
+    apiRequest('/images/jobs', { method: 'POST', body: req, schema: imageJobDetailSchema }),
+  listJobs: (q: { productId?: string; page?: number; pageSize?: number } = {}) =>
+    apiRequest('/images/jobs', { query: toQuery(q), schema: paginatedSchema(imageJobSchema) }),
+  getJob: (id: string): Promise<ImageJobDetail> =>
+    apiRequest(`/images/jobs/${id}`, { schema: imageJobDetailSchema }),
+  removeJob: (id: string) =>
+    apiRequest(`/images/jobs/${id}`, {
+      method: 'DELETE',
+      schema: z.object({
+        deleted: z.literal(true),
+        removedImages: z.number(),
+        keptImages: z.number(),
+      }),
+    }),
+  cancelJob: (id: string): Promise<ImageJobDetail> =>
+    apiRequest(`/images/jobs/${id}/cancel`, { method: 'POST', schema: imageJobDetailSchema }),
+  approve: (itemId: string, input: ImageReviewInputBody = {}): Promise<ImageItem> =>
+    apiRequest(`/images/items/${itemId}/approve`, {
+      method: 'POST',
+      body: input,
+      schema: imageItemSchema,
+    }),
+  reject: (itemId: string, input: ImageReviewInputBody = {}): Promise<ImageItem> =>
+    apiRequest(`/images/items/${itemId}/reject`, {
+      method: 'POST',
+      body: input,
+      schema: imageItemSchema,
+    }),
+  regenerate: (itemId: string): Promise<ImageJobDetail> =>
+    apiRequest(`/images/items/${itemId}/regenerate`, {
+      method: 'POST',
+      schema: imageJobDetailSchema,
+    }),
+  saveToLibrary: (itemId: string): Promise<ImageItem> =>
+    apiRequest(`/images/items/${itemId}/save`, { method: 'POST', schema: imageItemSchema }),
+  linkToProduct: (itemId: string): Promise<ImageItem> =>
+    apiRequest(`/images/items/${itemId}/link-product`, {
+      method: 'POST',
+      schema: imageItemSchema,
+    }),
+  downloadUrl: (itemId: string) =>
+    apiRequest(`/images/items/${itemId}/download-url`, { schema: mediaDownloadUrlSchema }),
+};
+export type ImageReviewInputBody = { note?: string | null; flags?: ImageReviewFlag[] };
+
 export const promptPresetRepository = {
   list: (scope: PromptPreset['scope']): Promise<PromptPreset[]> =>
     apiRequest('/prompt-presets', { query: { scope }, schema: z.array(promptPresetSchema) }),

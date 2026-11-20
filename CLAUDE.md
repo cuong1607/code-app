@@ -66,6 +66,20 @@ Dự án: **AI CONTENT STUDIO**, một monorepo pnpm gồm Next.js (web), NestJS
 - Test không gọi AI thật: dùng `MockScriptProvider` (hoặc client giả). AI thật: `pnpm ai:smoke` (tốn tiền, cần key).
 - Công cụ ghi file có thể biến `\uXXXX` thành ký tự thật → kiểm tra lại regex chứa ký tự vô hình.
 
+### Ảnh AI (`apps/api/src/ai/image`, `apps/api/src/images`) – từ Phase 04
+
+- Gọi provider ảnh CHỈ qua `ImageProviderRegistry` → adapter kế thừa `BaseImageProvider` (triển khai `callProvider()`
+  1 lần gọi, không retry; SDK tắt retry). Retry/timeout/rate limit do hàng đợi `image` + `ImageItemProcessor` kiểm soát.
+- Dữ kiện sản phẩm cho prompt ảnh CHỈ qua `buildVisualContext()` (thuộc tính DB, không suy đoán, không giá) và
+  `buildImagePrompt()` (escape, khối MUST PRESERVE ưu tiên cao nhất). Đổi template → tăng `version`.
+- Ảnh gốc sản phẩm bất biến; ảnh tạo ra là MediaAsset mới (`AI_IMAGE`, Mode F `COMPOSED_IMAGE`) dưới `ws/{ws}/ai-images/`,
+  `library_visible=false` cho tới khi người dùng lưu. Ghi MinIO trước, lỗi DB → xoá object.
+- Không tin ảnh provider trả về: `inspectOutput()` (magic bytes + giải mã); sai tỷ lệ → PAD, không kéo méo/cắt.
+- Không tuyên bố kiểm tra tự động bảo đảm đúng sản phẩm (chỉ "tham khảo"); ảnh dùng cho video phải qua duyệt khi bật kiểm duyệt.
+- Không có đơn giá → từ chối (402). Lời gọi lỗi ghi chi phí `null`, không ghi 0.
+- Test không gọi provider thật: `MockImageProvider` (có `setBehaviors`) hoặc client giả. Thật: `pnpm ai:image-smoke` (tốn tiền).
+- Khi chạy `pnpm test:integration`, dừng `pnpm dev` trước: worker ảnh của dev dùng chung Redis/queue và sẽ xử lý job của test.
+
 ### Xử lý lỗi
 
 - API: `AllExceptionsFilter` (toàn cục) + `RequestIdMiddleware`. Lỗi 5xx không xác định thì không lộ chi tiết ra client.
